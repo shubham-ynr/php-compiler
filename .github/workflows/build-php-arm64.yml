@@ -1,69 +1,68 @@
-name: Build All PHP Versions (ARM64)
+name: Build All PHP Versions (ARM64 Sequential)
 
 on:
   push:
     branches:
-      - "**"     # Har branch pe run hoga
-  workflow_dispatch:
+      - main
 
 jobs:
-
-  generate-matrix:
-    runs-on: macos-14
-    outputs:
-      versions: ${{ steps.set-matrix.outputs.versions }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: set-matrix
-        run: |
-          VERSIONS=$(grep -v '^#' versions/php-versions.txt | grep -v '^$' | jq -R -s -c 'split("\n")[:-1]')
-          echo "versions=$VERSIONS" >> $GITHUB_OUTPUT
-
   build:
-    needs: generate-matrix
     runs-on: macos-14
 
-    strategy:
-      fail-fast: true   # 🔥 1 fail → sab cancel
-      matrix:
-        php_version: ${{ fromJson(needs.generate-matrix.outputs.versions) }}
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Make build script executable
         run: chmod +x scripts/build-php.sh
 
       - name: Verify downloads
         run: |
-          echo "PHP Sources:"
-          ls -lah downloads/php | head
+          echo "📦 PHP Sources:"
+          ls -lah downloads/php || true
           echo ""
-          echo "Dependencies:"
-          ls -lah downloads/deps | head
+          echo "📦 Dependencies:"
+          ls -lah downloads/deps || true
 
-      - name: Build PHP
-        run: bash scripts/build-php.sh ${{ matrix.php_version }}
-
-      - name: Test PHP
+      - name: Build All Versions Sequentially
         run: |
-          PHP_PATH=./output-${{ matrix.php_version }}/php-${{ matrix.php_version }}-arm64/bin/php
-          if [ ! -f "$PHP_PATH" ]; then
-            echo "❌ PHP binary not found"
-            exit 1
-          fi
+          set -e
 
-          echo "PHP Version:"
-          $PHP_PATH -v
+          while read VERSION; do
+            if [[ -z "$VERSION" || "$VERSION" =~ ^# ]]; then
+              continue
+            fi
 
-          echo ""
-          echo "Loaded Extensions:"
-          $PHP_PATH -m | grep -i opcache
+            echo ""
+            echo "========================================"
+            echo "🚀 Building PHP $VERSION"
+            echo "========================================"
 
-      - name: Upload Artifact
+            bash scripts/build-php.sh $VERSION
+
+            echo ""
+            echo "🧪 Testing PHP $VERSION"
+
+            PHP_PATH=./output-$VERSION/php-$VERSION-arm64/bin/php
+
+            if [ ! -f "$PHP_PATH" ]; then
+              echo "❌ PHP binary not found for $VERSION"
+              exit 1
+            fi
+
+            $PHP_PATH -v
+            $PHP_PATH -m | grep -i opcache || true
+
+            echo ""
+            echo "📦 Uploading artifact for $VERSION"
+
+            echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+          done < versions/php-versions.txt
+
+      - name: Upload All Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: php-${{ matrix.php_version }}-arm64
-          path: output-${{ matrix.php_version }}/php-${{ matrix.php_version }}-arm64.zip
+          name: php-builds-arm64
+          path: |
+            output-*/php-*-arm64.zip

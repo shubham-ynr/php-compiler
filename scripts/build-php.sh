@@ -85,7 +85,7 @@ cd ../..
 tar -xzf "$GITHUB_WORKSPACE/$PHP_TARBALL"
 cd "php-$VERSION"
 
-# CLEAN ENV (important)
+# Clean environment
 unset CFLAGS
 unset CPPFLAGS
 unset LDFLAGS
@@ -94,6 +94,9 @@ unset LIBS
 export CPPFLAGS="-I$PREFIX/include"
 export LDFLAGS="-L$PREFIX/lib"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+
+# 👇 Required for DNS resolver symbols
+export LIBS="-lresolv"
 
 ./configure \
   --prefix="$FINAL" \

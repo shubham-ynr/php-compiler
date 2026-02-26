@@ -3,23 +3,45 @@ set -e
 
 ARCH="arm64"
 CPU=$(sysctl -n hw.ncpu)
-
 WORK="$(pwd)"
 VERSIONS_FILE="versions/php-versions.txt"
 
 ############################################
-# DOWNLOAD FUNCTION
+# DOWNLOAD HELPER
 ############################################
 download() {
   URL=$1
   FILE=$2
+
   if [ -f "$FILE" ]; then
     echo "✔ $(basename $FILE) exists"
     return
   fi
+
   echo "⬇ Downloading $(basename $FILE)"
   curl -L --fail -o "$FILE" "$URL"
 }
+
+############################################
+# LOCAL AUTOCONF (FOR PHPIZE)
+############################################
+TOOLCHAIN="$WORK/toolchain"
+mkdir -p "$TOOLCHAIN"
+
+if [ ! -f "$TOOLCHAIN/bin/autoconf" ]; then
+  echo "🔧 Building local autoconf..."
+
+  cd "$WORK"
+  download https://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz autoconf.tar.gz
+  tar -xzf autoconf.tar.gz
+  cd autoconf-2.71
+  ./configure --prefix="$TOOLCHAIN"
+  make -j$CPU
+  make install
+  cd "$WORK"
+fi
+
+export PATH="$TOOLCHAIN/bin:$PATH"
 
 ############################################
 # LOOP ALL PHP VERSIONS
@@ -27,9 +49,9 @@ download() {
 while read VERSION; do
   [[ -z "$VERSION" || "$VERSION" =~ ^# ]] && continue
 
-  echo "=============================="
-  echo "🚀 Building PHP $VERSION"
-  echo "=============================="
+  echo "======================================"
+  echo "🚀 BUILDING PHP $VERSION"
+  echo "======================================"
 
   ROOT="$WORK/output-$VERSION"
   SRC="$ROOT/src"
@@ -40,7 +62,7 @@ while read VERSION; do
   cd "$SRC"
 
   ########################################
-  # LIVE DOWNLOAD DEPENDENCIES
+  # DOWNLOAD DEPENDENCIES
   ########################################
   download https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.17.tar.gz libiconv.tar.gz
   download https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz zlib.tar.gz
@@ -147,8 +169,6 @@ while read VERSION; do
   make -j$CPU
   make install
 
-  install_name_tool -add_rpath "$PREFIX/lib" "$FINAL/bin/php" || true
-
   ########################################
   # BUILD OPCACHE SEPARATELY
   ########################################
@@ -165,7 +185,7 @@ while read VERSION; do
   make install
 
   ########################################
-  # php.ini
+  # CREATE php.ini
   ########################################
   mkdir -p "$FINAL/lib"
 
@@ -192,4 +212,6 @@ EOF
 
 done < "$VERSIONS_FILE"
 
-echo "✅ ALL BUILDS DONE"
+echo "======================================"
+echo "✅ ALL BUILDS COMPLETED SUCCESSFULLY"
+echo "======================================"

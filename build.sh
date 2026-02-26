@@ -22,9 +22,11 @@ fi
 CACHE="$WORK/.cache"
 DEPS="$CACHE/deps"
 TOOLCHAIN="$CACHE/toolchain"
+SRC_CACHE="$CACHE/src"
 
 mkdir -p "$DEPS"
 mkdir -p "$TOOLCHAIN"
+mkdir -p "$SRC_CACHE"
 
 ############################################
 # DOWNLOAD FUNCTION
@@ -43,14 +45,14 @@ download() {
 ############################################
 if [ ! -f "$TOOLCHAIN/bin/autoconf" ]; then
   echo "🔧 Building autoconf..."
-  cd "$WORK"
+
+  cd "$SRC_CACHE"
   download https://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz autoconf.tar.gz
   tar -xzf autoconf.tar.gz
   cd autoconf-2.71
   ./configure --prefix="$TOOLCHAIN"
   make -j$CPU
   make install
-  cd "$WORK"
 fi
 
 export PATH="$TOOLCHAIN/bin:$PATH"
@@ -59,9 +61,20 @@ export PATH="$TOOLCHAIN/bin:$PATH"
 # BUILD GLOBAL DEPENDENCIES (ONCE)
 ############################################
 if [ ! -f "$DEPS/lib/libicuuc.a" ]; then
-  echo "🔧 Building dependencies..."
 
-  cd "$WORK"
+  echo "🔧 Building global dependencies..."
+
+  cd "$SRC_CACHE"
+
+  ########################################
+  # LIBICONV (STATIC)
+  ########################################
+  download https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.17.tar.gz libiconv.tar.gz
+  tar -xzf libiconv.tar.gz
+  cd libiconv-1.17
+  ./configure --prefix="$DEPS" --enable-static --disable-shared
+  make -j$CPU && make install
+  cd ..
 
   ########################################
   # ZLIB
@@ -105,6 +118,7 @@ if [ ! -f "$DEPS/lib/libicuuc.a" ]; then
     --disable-shared
   make -j$CPU && make install
   cd ../..
+
 fi
 
 ############################################
@@ -114,8 +128,10 @@ ROOT="$WORK/output-$VERSION"
 FINAL="$ROOT/php-$VERSION-$ARCH"
 
 mkdir -p "$ROOT"
+cd "$SRC_CACHE"
 
 download https://www.php.net/distributions/php-$VERSION.tar.gz php.tar.gz
+rm -rf php-$VERSION
 tar -xzf php.tar.gz
 cd php-$VERSION
 
@@ -146,6 +162,7 @@ export LIBS="-lresolv"
   --with-openssl="$DEPS" \
   --with-icu-dir="$DEPS" \
   --with-onig="$DEPS" \
+  --with-iconv="$DEPS" \
   --with-sqlite3 \
   --with-mysqli=mysqlnd \
   --with-pdo-mysql=mysqlnd \
@@ -168,14 +185,16 @@ opcache.jit=0
 EOF
 
 ############################################
-# VERIFY ICU NOT DYNAMIC
+# VERIFY ICU STATIC
 ############################################
+echo ""
 echo "🔍 Checking ICU linkage..."
+
 if otool -L "$FINAL/bin/php" | grep icu; then
-  echo "❌ ICU still dynamic!"
+  echo "❌ ICU is dynamic (should not happen)"
   exit 1
 else
-  echo "✅ ICU successfully linked statically"
+  echo "✅ ICU linked statically"
 fi
 
 ############################################
@@ -190,4 +209,9 @@ cd "$ROOT"
 zip -r "php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
 
 echo ""
-echo "✅ PHP $VERSION built with STATIC ICU (Portable + PECL compatible)"
+echo "======================================"
+echo "✅ PHP $VERSION built successfully"
+echo "ICU = STATIC"
+echo "ICONV = STATIC"
+echo "PECL = ENABLED"
+echo "======================================"

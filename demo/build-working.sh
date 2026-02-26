@@ -98,7 +98,6 @@ fi
 ############################################
 ROOT="$WORK/output-$VERSION"
 FINAL="$ROOT/php-$VERSION-$ARCH"
-
 mkdir -p "$ROOT"
 
 download https://www.php.net/distributions/php-$VERSION.tar.gz php.tar.gz
@@ -107,9 +106,8 @@ cd php-$VERSION
 
 unset CFLAGS CPPFLAGS LDFLAGS LIBS
 
-# 🔥 IMPORTANT FIX — RELATIVE RPATH
 export CPPFLAGS="-I$GLOBAL_DEPS/include"
-export LDFLAGS="-L$GLOBAL_DEPS/lib -Wl,-rpath,@loader_path/../lib"
+export LDFLAGS="-L$GLOBAL_DEPS/lib -Wl,-rpath,$GLOBAL_DEPS/lib"
 export DYLD_LIBRARY_PATH="$GLOBAL_DEPS/lib"
 export PKG_CONFIG_PATH="$GLOBAL_DEPS/lib/pkgconfig"
 export LIBS="-lresolv"
@@ -144,15 +142,6 @@ make -j$CPU
 make install
 
 ############################################
-# COPY LIBRARIES INTO FINAL PACKAGE
-############################################
-mkdir -p "$FINAL/lib"
-cp -R "$GLOBAL_DEPS/lib/"*.dylib "$FINAL/lib/" || true
-
-# Ensure rpath exists
-install_name_tool -add_rpath "@loader_path/../lib" "$FINAL/bin/php" 2>/dev/null || true
-
-############################################
 # BUILD OPCACHE
 ############################################
 cd ext/opcache
@@ -175,15 +164,9 @@ opcache.enable_cli=1
 opcache.jit=0
 EOF
 
-############################################
-# VERIFY
-############################################
 "$FINAL/bin/php" -v
 
-############################################
-# PACKAGE
-############################################
 cd "$ROOT"
 zip -r "php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
 
-echo "✅ PHP $VERSION build complete (Portable)"
+echo "✅ PHP $VERSION complete"

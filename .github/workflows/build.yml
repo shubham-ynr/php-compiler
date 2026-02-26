@@ -2,6 +2,7 @@ name: PHP Complete Builder ARM64
 
 on:
   push:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -10,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Master Build Script
+      - name: Run Master Script
         run: |
           chmod +x build-all.sh
           bash build-all.sh

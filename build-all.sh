@@ -8,13 +8,12 @@ DOWNLOADS="$ROOT/downloads"
 PHP_SRC="$DOWNLOADS/php"
 DEPS_SRC="$DOWNLOADS/deps"
 PECL_SRC="$DOWNLOADS/pecl"
-DB_SRC="$DOWNLOADS/db"
 TOOLCHAIN_SRC="$DOWNLOADS/toolchain"
 
 LOCAL_DEPS="$ROOT/local-deps"
 LOCAL_TOOLCHAIN="$ROOT/local-toolchain"
 
-mkdir -p "$PHP_SRC" "$DEPS_SRC" "$PECL_SRC" "$DB_SRC" "$TOOLCHAIN_SRC"
+mkdir -p "$PHP_SRC" "$DEPS_SRC" "$PECL_SRC" "$TOOLCHAIN_SRC"
 mkdir -p "$LOCAL_DEPS" "$LOCAL_TOOLCHAIN"
 
 ############################################
@@ -32,11 +31,10 @@ download() {
 }
 
 ############################################
-# DOWNLOAD PHASE
+# DOWNLOAD STATIC DEPS (ONCE)
 ############################################
-echo "=== DOWNLOAD PHASE ==="
+echo "=== Downloading Dependencies ==="
 
-# CORE DEPS
 download https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz \
   "$DEPS_SRC/zlib-1.3.tar.gz"
 
@@ -52,87 +50,71 @@ download https://github.com/kkos/oniguruma/releases/download/v6.9.9/onig-6.9.9.t
 download https://libzip.org/download/libzip-1.10.1.tar.gz \
   "$DEPS_SRC/libzip-1.10.1.tar.gz"
 
-# TOOLCHAIN
-download https://ftp.gnu.org/gnu/m4/m4-1.4.19.tar.gz \
-  "$TOOLCHAIN_SRC/m4-1.4.19.tar.gz"
-
-download https://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz \
-  "$TOOLCHAIN_SRC/autoconf-2.71.tar.gz"
-
-download https://ftp.gnu.org/gnu/automake/automake-1.16.5.tar.gz \
-  "$TOOLCHAIN_SRC/automake-1.16.5.tar.gz"
-
-download https://ftp.gnu.org/gnu/libtool/libtool-2.4.7.tar.gz \
-  "$TOOLCHAIN_SRC/libtool-2.4.7.tar.gz"
-
-download https://pkgconfig.freedesktop.org/releases/pkg-config-0.29.2.tar.gz \
-  "$TOOLCHAIN_SRC/pkg-config-0.29.2.tar.gz"
-
-download https://ftp.gnu.org/gnu/bison/bison-3.8.2.tar.gz \
-  "$TOOLCHAIN_SRC/bison-3.8.2.tar.gz"
-
 download https://github.com/skvadrik/re2c/releases/download/3.1/re2c-3.1.tar.xz \
   "$TOOLCHAIN_SRC/re2c-3.1.tar.xz"
 
-# PECL
-download https://pecl.php.net/get/apcu-5.1.23.tgz \
-  "$PECL_SRC/apcu-5.1.23.tgz"
-
-download https://pecl.php.net/get/redis-6.0.2.tgz \
-  "$PECL_SRC/redis-6.0.2.tgz"
-
-download https://pecl.php.net/get/xdebug-3.3.2.tgz \
-  "$PECL_SRC/xdebug-3.3.2.tgz"
-
-# PHP
-while read V; do
-  [[ -z "$V" || "$V" =~ ^# ]] && continue
-  download https://www.php.net/distributions/php-$V.tar.gz \
-    "$PHP_SRC/php-$V.tar.gz"
-done < "$VERSION_FILE"
-
 ############################################
-# BUILD TOOLCHAIN
+# BUILD CORE DEPS
 ############################################
-echo "=== BUILD TOOLCHAIN ==="
+echo "=== Building Core Dependencies ==="
 
 export PATH="$LOCAL_TOOLCHAIN/bin:$PATH"
+export PKG_CONFIG_PATH="$LOCAL_DEPS/lib/pkgconfig"
 
-build_tool() {
+build_dep() {
   FILE=$1
   NAME=$(basename $FILE)
   NAME=${NAME%.tar.gz}
+  NAME=${NAME%.tgz}
   NAME=${NAME%.tar.xz}
 
   rm -rf build-$NAME
   mkdir build-$NAME
   cd build-$NAME
 
+  tar -xf "$DEPS_SRC/$FILE" --strip-components=1 || \
   tar -xf "$TOOLCHAIN_SRC/$FILE" --strip-components=1
-  ./configure --prefix="$LOCAL_TOOLCHAIN"
+
+  ./configure --prefix="$LOCAL_DEPS" || true
   make -j$(sysctl -n hw.ncpu)
   make install
   cd ..
 }
 
-build_tool m4-1.4.19.tar.gz
-build_tool autoconf-2.71.tar.gz
-build_tool automake-1.16.5.tar.gz
-build_tool libtool-2.4.7.tar.gz
-build_tool pkg-config-0.29.2.tar.gz
-build_tool bison-3.8.2.tar.gz
-build_tool re2c-3.1.tar.xz
+build_dep zlib-1.3.tar.gz
+build_dep onig-6.9.9.tar.gz
+build_dep libzip-1.10.1.tar.gz
 
 ############################################
-# BUILD PHP
+# BUILD PHP PER VERSION (LAZY DOWNLOAD)
 ############################################
-echo "=== BUILD PHP ==="
+echo "=== Building PHP Versions ==="
 
 while read V; do
   [[ -z "$V" || "$V" =~ ^# ]] && continue
 
-  echo ">>> Building PHP $V"
+  FILE="php-$V.tar.gz"
+  TARGET="$PHP_SRC/$FILE"
 
+  ########################################
+  # Lazy Download Per Version
+  ########################################
+  if [ ! -f "$TARGET" ]; then
+    echo "⬇ Downloading PHP $V"
+    MAIN_URL="https://www.php.net/distributions/$FILE"
+    ARCHIVE_URL="https://museum.php.net/php${V%.*}/$FILE"
+
+    if curl -L --fail -o "$TARGET" "$MAIN_URL"; then
+      echo "✔ Main mirror"
+    else
+      echo "Main failed → Archive"
+      curl -L --fail -o "$TARGET" "$ARCHIVE_URL"
+    fi
+  fi
+
+  ########################################
+  # Build PHP
+  ########################################
   PREFIX="$ROOT/output-$V/php-$V-arm64"
   mkdir -p "$PREFIX"
 
@@ -140,10 +122,14 @@ while read V; do
   mkdir build-php
   cd build-php
 
-  tar -xf "$PHP_SRC/php-$V.tar.gz" --strip-components=1
+  tar -xf "$TARGET" --strip-components=1
 
   ./configure \
     --prefix="$PREFIX" \
+    --with-config-file-path="$PREFIX/etc" \
+    --with-zlib="$LOCAL_DEPS" \
+    --with-openssl="$LOCAL_DEPS" \
+    --with-iconv \
     --enable-cli \
     --enable-fpm \
     --enable-opcache \
@@ -151,19 +137,15 @@ while read V; do
     --enable-mbstring \
     --enable-intl \
     --enable-mysqlnd \
-    --with-zlib \
-    --with-openssl \
-    --with-iconv \
     --without-pear
 
   make -j$(sysctl -n hw.ncpu)
   make install
-
   cd ..
 
-  ##########################################
-  # PECL BUILD
-  ##########################################
+  ########################################
+  # PECL INSTALL
+  ########################################
   export PATH="$PREFIX/bin:$PATH"
 
   for FILE in $PECL_SRC/*.tgz; do
@@ -177,7 +159,7 @@ while read V; do
     make install
 
     EXT=$(basename "$FILE" .tgz | cut -d- -f1)
-    echo "extension=$EXT.so" >> "$PREFIX/lib/php.ini"
+    echo "extension=$EXT.so" >> "$PREFIX/etc/php.ini"
 
     cd ..
     rm -rf "$DIR"

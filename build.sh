@@ -12,7 +12,7 @@ if [ -z "$VERSION" ]; then
 fi
 
 ############################################
-# GLOBAL PATHS (CACHE)
+# GLOBAL CACHE
 ############################################
 GLOBAL_DEPS="$WORK/.global-deps"
 TOOLCHAIN="$WORK/.toolchain"
@@ -90,7 +90,7 @@ if [ ! -f "$GLOBAL_DEPS/lib/libz.a" ]; then
   make -j$CPU && make install_sw
   cd ..
 
-  # icu
+  # ICU
   download https://github.com/unicode-org/icu/releases/download/release-74-2/icu4c-74_2-src.tgz icu.tgz
   tar -xzf icu.tgz
   cd icu/source
@@ -150,24 +150,34 @@ make -j$CPU
 make install
 
 ############################################
-# COPY LIBRARIES
+# COPY ALL DYLIBS
 ############################################
 mkdir -p "$FINAL/lib"
 cp "$GLOBAL_DEPS/lib/"*.dylib "$FINAL/lib/" || true
 
 ############################################
-# FIX macOS INSTALL NAMES (CRITICAL)
+# FIX INSTALL NAMES (FULL ICU SAFE)
 ############################################
-echo "🔧 Fixing install names..."
+echo "🔧 Fixing dylib install names..."
 
+# Fix self IDs
 for lib in "$FINAL"/lib/*.dylib; do
-  base=$(basename "$lib")
-  install_name_tool -id "@rpath/$base" "$lib"
+    base=$(basename "$lib")
+    install_name_tool -id "@rpath/$base" "$lib"
 done
 
+# Fix inter-dependencies
 for lib in "$FINAL"/lib/*.dylib; do
-  base=$(basename "$lib")
-  install_name_tool -change "$GLOBAL_DEPS/lib/$base" "@rpath/$base" "$FINAL/bin/php" 2>/dev/null || true
+    for dep in "$FINAL"/lib/*.dylib; do
+        depbase=$(basename "$dep")
+        install_name_tool -change "$GLOBAL_DEPS/lib/$depbase" "@rpath/$depbase" "$lib" 2>/dev/null || true
+    done
+done
+
+# Fix php binary references
+for dep in "$FINAL"/lib/*.dylib; do
+    depbase=$(basename "$dep")
+    install_name_tool -change "$GLOBAL_DEPS/lib/$depbase" "@rpath/$depbase" "$FINAL/bin/php" 2>/dev/null || true
 done
 
 install_name_tool -add_rpath "@loader_path/../lib" "$FINAL/bin/php" 2>/dev/null || true

@@ -31,6 +31,7 @@ cd "$SRC"
 ########################################
 # BUILD LIBICONV
 ########################################
+echo "📦 Building libiconv"
 curl -L -o libiconv.tar.gz https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.17.tar.gz
 tar -xzf libiconv.tar.gz
 cd libiconv-1.17
@@ -42,6 +43,7 @@ cd ..
 ########################################
 # BUILD ZLIB
 ########################################
+echo "📦 Building zlib"
 tar -xzf "$GITHUB_WORKSPACE/downloads/deps/zlib-1.3.tar.gz"
 cd zlib-1.3
 ./configure --prefix="$PREFIX"
@@ -52,6 +54,7 @@ cd ..
 ########################################
 # BUILD ONIGURUMA
 ########################################
+echo "📦 Building Oniguruma"
 tar -xzf "$GITHUB_WORKSPACE/downloads/deps/onig-6.9.9.tar.gz"
 cd onig-6.9.9
 ./configure --prefix="$PREFIX"
@@ -62,6 +65,7 @@ cd ..
 ########################################
 # BUILD OPENSSL
 ########################################
+echo "📦 Building OpenSSL"
 tar -xzf "$GITHUB_WORKSPACE/downloads/deps/openssl-3.2.1.tar.gz"
 cd openssl-3.2.1
 ./Configure darwin64-arm64-cc --prefix="$PREFIX"
@@ -72,6 +76,7 @@ cd ..
 ########################################
 # BUILD ICU
 ########################################
+echo "📦 Building ICU"
 tar -xzf "$GITHUB_WORKSPACE/downloads/deps/icu4c-74_2-src.tgz"
 cd icu/source
 ./configure --prefix="$PREFIX"
@@ -80,12 +85,15 @@ make install
 cd ../..
 
 ########################################
-# BUILD PHP (NO OPCACHE HERE)
+# BUILD PHP (WITHOUT OPCACHE)
 ########################################
+echo "⚙ Building PHP $VERSION"
+
 tar -xzf "$GITHUB_WORKSPACE/$PHP_TARBALL"
 cd "php-$VERSION"
 
-export CPPFLAGS="-I$PREFIX/include"
+export CPPFLAGS="-I$PREFIX/include -D_DARWIN_C_SOURCE"
+export CFLAGS="-D_DARWIN_C_SOURCE"
 export LDFLAGS="-L$PREFIX/lib"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 
@@ -119,13 +127,20 @@ make -j$CPU
 make install
 
 ########################################
-# BUILD OPCACHE SEPARATELY
+# BUILD OPCACHE SEPARATELY (STABLE)
 ########################################
+echo "⚙ Building OPcache separately"
+
 cd ext/opcache
+
+export CPPFLAGS="-I$PREFIX/include -D_DARWIN_C_SOURCE"
+export CFLAGS="-D_DARWIN_C_SOURCE"
+export LDFLAGS="-L$PREFIX/lib"
+
 "$FINAL/bin/phpize"
+
 ./configure \
   --with-php-config="$FINAL/bin/php-config" \
-  --enable-opcache \
   --disable-huge-code-pages \
   --disable-opcache-jit
 

@@ -7,12 +7,12 @@ CPU=$(sysctl -n hw.ncpu)
 WORK="$(pwd)"
 
 if [ -z "$VERSION" ]; then
-  echo "Provide PHP version"
+  echo "Usage: ./build.sh 8.1.6"
   exit 1
 fi
 
 ############################################
-# GLOBAL PATHS (CACHE FRIENDLY)
+# GLOBAL PATHS (CACHE)
 ############################################
 GLOBAL_DEPS="$WORK/.global-deps"
 TOOLCHAIN="$WORK/.toolchain"
@@ -21,7 +21,7 @@ mkdir -p "$GLOBAL_DEPS"
 mkdir -p "$TOOLCHAIN"
 
 ############################################
-# DOWNLOAD HELPER
+# DOWNLOAD FUNCTION
 ############################################
 download() {
   URL=$1
@@ -33,7 +33,7 @@ download() {
 }
 
 ############################################
-# BUILD AUTOCONF (CACHED)
+# BUILD AUTOCONF (FOR PHPIZE)
 ############################################
 if [ ! -f "$TOOLCHAIN/bin/autoconf" ]; then
   echo "🔧 Building autoconf..."
@@ -54,8 +54,11 @@ export PATH="$TOOLCHAIN/bin:$PATH"
 ############################################
 if [ ! -f "$GLOBAL_DEPS/lib/libz.a" ]; then
 
+  echo "🔧 Building global dependencies..."
+
   cd "$WORK"
 
+  # libiconv
   download https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.17.tar.gz libiconv.tar.gz
   tar -xzf libiconv.tar.gz
   cd libiconv-1.17
@@ -63,6 +66,7 @@ if [ ! -f "$GLOBAL_DEPS/lib/libz.a" ]; then
   make -j$CPU && make install
   cd ..
 
+  # zlib
   download https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz zlib.tar.gz
   tar -xzf zlib.tar.gz
   cd zlib-1.3
@@ -70,6 +74,7 @@ if [ ! -f "$GLOBAL_DEPS/lib/libz.a" ]; then
   make -j$CPU && make install
   cd ..
 
+  # oniguruma
   download https://github.com/kkos/oniguruma/releases/download/v6.9.9/onig-6.9.9.tar.gz onig.tar.gz
   tar -xzf onig.tar.gz
   cd onig-6.9.9
@@ -77,6 +82,7 @@ if [ ! -f "$GLOBAL_DEPS/lib/libz.a" ]; then
   make -j$CPU && make install
   cd ..
 
+  # openssl
   download https://www.openssl.org/source/openssl-3.2.1.tar.gz openssl.tar.gz
   tar -xzf openssl.tar.gz
   cd openssl-3.2.1
@@ -84,6 +90,7 @@ if [ ! -f "$GLOBAL_DEPS/lib/libz.a" ]; then
   make -j$CPU && make install_sw
   cd ..
 
+  # icu
   download https://github.com/unicode-org/icu/releases/download/release-74-2/icu4c-74_2-src.tgz icu.tgz
   tar -xzf icu.tgz
   cd icu/source
@@ -94,7 +101,7 @@ if [ ! -f "$GLOBAL_DEPS/lib/libz.a" ]; then
 fi
 
 ############################################
-# BUILD PHP VERSION
+# BUILD PHP
 ############################################
 ROOT="$WORK/output-$VERSION"
 FINAL="$ROOT/php-$VERSION-$ARCH"
@@ -107,9 +114,8 @@ cd php-$VERSION
 
 unset CFLAGS CPPFLAGS LDFLAGS LIBS
 
-# 🔥 IMPORTANT FIX — RELATIVE RPATH
 export CPPFLAGS="-I$GLOBAL_DEPS/include"
-export LDFLAGS="-L$GLOBAL_DEPS/lib -Wl,-rpath,@loader_path/../lib"
+export LDFLAGS="-L$GLOBAL_DEPS/lib"
 export DYLD_LIBRARY_PATH="$GLOBAL_DEPS/lib"
 export PKG_CONFIG_PATH="$GLOBAL_DEPS/lib/pkgconfig"
 export LIBS="-lresolv"
@@ -144,12 +150,26 @@ make -j$CPU
 make install
 
 ############################################
-# COPY LIBRARIES INTO FINAL PACKAGE
+# COPY LIBRARIES
 ############################################
 mkdir -p "$FINAL/lib"
-cp -R "$GLOBAL_DEPS/lib/"*.dylib "$FINAL/lib/" || true
+cp "$GLOBAL_DEPS/lib/"*.dylib "$FINAL/lib/" || true
 
-# Ensure rpath exists
+############################################
+# FIX macOS INSTALL NAMES (CRITICAL)
+############################################
+echo "🔧 Fixing install names..."
+
+for lib in "$FINAL"/lib/*.dylib; do
+  base=$(basename "$lib")
+  install_name_tool -id "@rpath/$base" "$lib"
+done
+
+for lib in "$FINAL"/lib/*.dylib; do
+  base=$(basename "$lib")
+  install_name_tool -change "$GLOBAL_DEPS/lib/$base" "@rpath/$base" "$FINAL/bin/php" 2>/dev/null || true
+done
+
 install_name_tool -add_rpath "@loader_path/../lib" "$FINAL/bin/php" 2>/dev/null || true
 
 ############################################
@@ -166,6 +186,9 @@ cd ext/opcache
 make -j$CPU
 make install
 
+############################################
+# php.ini
+############################################
 mkdir -p "$FINAL/lib"
 
 cat > "$FINAL/lib/php.ini" <<EOF
@@ -178,6 +201,7 @@ EOF
 ############################################
 # VERIFY
 ############################################
+echo "🔎 Verifying..."
 "$FINAL/bin/php" -v
 
 ############################################
@@ -186,4 +210,5 @@ EOF
 cd "$ROOT"
 zip -r "php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
 
-echo "✅ PHP $VERSION build complete (Portable)"
+echo ""
+echo "✅ PHP $VERSION ARM64 portable build complete"

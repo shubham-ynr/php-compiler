@@ -1,4 +1,4 @@
-name: PHP Complete Builder ARM64
+name: PHP Complete Parallel Builder ARM64
 
 on:
   push:
@@ -9,15 +9,61 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Run Builder
+      ############################################
+      # CACHE TOOLCHAIN (AUTOCONF)
+      ############################################
+      - name: Cache Toolchain
+        uses: actions/cache@v4
+        with:
+          path: toolchain
+          key: toolchain-autoconf-2.71
+
+      ############################################
+      # CACHE ALL VERSION OUTPUTS
+      ############################################
+      - name: Cache Build Outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            output-*
+          key: php-build-${{ runner.os }}-${{ hashFiles('versions/php-versions.txt') }}
+
+      ############################################
+      # RUN MASTER SCRIPT
+      ############################################
+      - name: Run Build Script
         run: |
           chmod +x build-all.sh
           bash build-all.sh
 
-      - name: Upload Builds
+      ############################################
+      # VERIFY BUILDS
+      ############################################
+      - name: Verify Builds
+        run: |
+          while read V; do
+            [[ -z "$V" || "$V" =~ ^# ]] && continue
+            echo "Testing PHP $V"
+            output-$V/php-$V-arm64/bin/php -v
+          done < versions/php-versions.txt
+
+      ############################################
+      # ARCHIVE ALL BUILDS
+      ############################################
+      - name: Zip Outputs
+        run: |
+          for dir in output-*; do
+            zip -r "$dir.zip" "$dir"
+          done
+
+      ############################################
+      # UPLOAD ARTIFACTS
+      ############################################
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: php-builds
-          path: output-*/php-*-arm64.zip
+          name: php-arm64-builds
+          path: output-*.zip

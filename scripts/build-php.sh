@@ -19,10 +19,6 @@ CPU=$(sysctl -n hw.ncpu)
 mkdir -p "$SRC"
 mkdir -p "$PREFIX"
 
-########################################
-# VERIFY SOURCE
-########################################
-
 PHP_TARBALL="downloads/php/php-$VERSION.tar.gz"
 
 if [ ! -f "$PHP_TARBALL" ]; then
@@ -30,45 +26,60 @@ if [ ! -f "$PHP_TARBALL" ]; then
   exit 1
 fi
 
-########################################
-# BUILD DEPENDENCIES
-########################################
-
 cd "$SRC"
 
-build_shared() {
-  FILE=$1
-  DIR=$2
-
-  cp "$GITHUB_WORKSPACE/downloads/deps/$FILE" .
-  tar -xf "$FILE"
-  cd "$DIR"
-  ./configure --prefix="$PREFIX" --enable-shared --disable-static
-  make -j$CPU
-  make install
-  cd ..
-}
+########################################
+# ZLIB (SPECIAL CASE)
+########################################
 
 echo "📦 Building zlib"
-build_shared zlib-1.3.tar.gz zlib-1.3
+
+cp "$GITHUB_WORKSPACE/downloads/deps/zlib-1.3.tar.gz" .
+tar -xzf zlib-1.3.tar.gz
+cd zlib-1.3
+./configure --prefix="$PREFIX"
+make -j$CPU
+make install
+cd ..
+
+########################################
+# ONIGURUMA
+########################################
 
 echo "📦 Building Oniguruma"
-build_shared onig-6.9.9.tar.gz onig-6.9.9
+
+cp "$GITHUB_WORKSPACE/downloads/deps/onig-6.9.9.tar.gz" .
+tar -xzf onig-6.9.9.tar.gz
+cd onig-6.9.9
+./configure --prefix="$PREFIX"
+make -j$CPU
+make install
+cd ..
+
+########################################
+# OPENSSL
+########################################
 
 echo "📦 Building OpenSSL"
+
 cp "$GITHUB_WORKSPACE/downloads/deps/openssl-3.2.1.tar.gz" .
 tar -xzf openssl-3.2.1.tar.gz
 cd openssl-3.2.1
-./Configure darwin64-arm64-cc shared no-tests --prefix="$PREFIX"
+./Configure darwin64-arm64-cc --prefix="$PREFIX"
 make -j$CPU
 make install_sw
 cd ..
 
+########################################
+# ICU
+########################################
+
 echo "📦 Building ICU"
+
 cp "$GITHUB_WORKSPACE/downloads/deps/icu4c-74_2-src.tgz" .
 tar -xzf icu4c-74_2-src.tgz
 cd icu/source
-./configure --prefix="$PREFIX" --enable-shared --disable-static
+./configure --prefix="$PREFIX"
 make -j$CPU
 make install
 cd ../..
@@ -101,8 +112,7 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
   --with-openssl="$PREFIX" \
   --with-icu-dir="$PREFIX" \
   --with-onig="$PREFIX" \
-  --with-sqlite3 \
-  --disable-static
+  --with-sqlite3
 
 make -j$CPU
 make install

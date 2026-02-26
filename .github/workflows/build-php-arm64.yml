@@ -1,0 +1,41 @@
+name: Build PHP ARM64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php_version:
+          # 8.1
+          - '8.1.0'
+          - '8.1.1'
+          # Add more gradually
+
+    name: PHP ${{ matrix.php_version }} ARM64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Make Script Executable
+        run: chmod +x scripts/build-php.sh
+
+      - name: Build PHP
+        run: |
+          bash scripts/build-php.sh ${{ matrix.php_version }}
+
+      - name: Verify
+        run: |
+          ./output-${{ matrix.php_version }}/php-${{ matrix.php_version }}-arm64/bin/php -v
+          ./output-${{ matrix.php_version }}/php-${{ matrix.php_version }}-arm64/bin/php -m
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: php-${{ matrix.php_version }}-arm64
+          path: output-${{ matrix.php_version }}

@@ -85,7 +85,7 @@ make install
 cd ../..
 
 ########################################
-# BUILD PHP (WITHOUT OPCACHE)
+# BUILD PHP CORE (OPCACHE DISABLED HERE)
 ########################################
 echo "⚙ Building PHP $VERSION"
 
@@ -99,6 +99,7 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 
 ./configure \
   --prefix="$FINAL" \
+  --disable-opcache \
   --enable-cli \
   --enable-fpm \
   --enable-mbstring \
@@ -127,7 +128,7 @@ make -j$CPU
 make install
 
 ########################################
-# BUILD OPCACHE SEPARATELY (STABLE)
+# BUILD OPCACHE SEPARATELY (SAFE WAY)
 ########################################
 echo "⚙ Building OPcache separately"
 

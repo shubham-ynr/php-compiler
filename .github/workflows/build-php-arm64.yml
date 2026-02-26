@@ -15,8 +15,8 @@ jobs:
 
       - id: set-matrix
         run: |
-          VERSIONS=$(grep -v '^#' versions/php-versions.txt | grep -v '^$' | sed 's/ /"/g' | awk '{print "\"" $0 "\""}' | paste -sd, -)
-          echo "versions=[$VERSIONS]" >> $GITHUB_OUTPUT
+          VERSIONS=$(grep -v '^#' versions/php-versions.txt | grep -v '^$' | jq -R -s -c 'split("\n")[:-1]')
+          echo "versions=$VERSIONS" >> $GITHUB_OUTPUT
 
   build:
     needs: generate-matrix
@@ -30,11 +30,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: chmod +x scripts/build-php.sh
+      - name: Make script executable
+        run: chmod +x scripts/build-php.sh
 
       - name: Verify downloads exist
         run: |
+          echo "PHP Sources:"
           ls -lah downloads/php | head
+          echo ""
+          echo "Dependencies:"
           ls -lah downloads/deps | head
 
       - name: Build PHP
@@ -47,8 +51,11 @@ jobs:
             echo "❌ PHP binary not found"
             exit 1
           fi
+          echo "PHP Version:"
           $PHP_PATH -v
-          $PHP_PATH -m | grep opcache || true
+          echo ""
+          echo "Loaded Extensions:"
+          $PHP_PATH -m | grep -i opcache || true
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

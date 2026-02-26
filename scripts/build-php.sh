@@ -29,6 +29,19 @@ fi
 cd "$SRC"
 
 ########################################
+# BUILD LIBICONV (FIX FOR MACOS ARM)
+########################################
+echo "📦 Building libiconv"
+
+curl -L -o libiconv.tar.gz https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.17.tar.gz
+tar -xzf libiconv.tar.gz
+cd libiconv-1.17
+./configure --prefix="$PREFIX"
+make -j$CPU
+make install
+cd ..
+
+########################################
 # BUILD ZLIB
 ########################################
 echo "📦 Building zlib"
@@ -105,6 +118,7 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
   --with-openssl="$PREFIX" \
   --with-icu-dir="$PREFIX" \
   --with-onig="$PREFIX" \
+  --with-iconv="$PREFIX" \
   --with-sqlite3 \
   --with-mysqli=mysqlnd \
   --with-pdo-mysql=mysqlnd

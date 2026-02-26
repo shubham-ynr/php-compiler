@@ -1,135 +1,83 @@
 #!/bin/bash
 set -e
 
-PHP_VERSION=$1
-ARCH=arm64
+DEST_DIR="downloads"
+PHP_DIR="$DEST_DIR/php"
+DEPS_DIR="$DEST_DIR/deps"
+VERSION_FILE="versions/php-versions.txt"
 
-if [ -z "$PHP_VERSION" ]; then
-  echo "Usage: ./build-php.sh <php-version>"
-  exit 1
-fi
-
-ROOT="$PWD/output-$PHP_VERSION"
-SRC="$ROOT/src"
-PREFIX="$ROOT/local"
-PHP_PREFIX="$ROOT/php-$PHP_VERSION-$ARCH"
-
-CPU=$(sysctl -n hw.ncpu)
-
-rm -rf "$ROOT"
-mkdir -p "$SRC" "$PREFIX"
+mkdir -p "$PHP_DIR"
+mkdir -p "$DEPS_DIR"
 
 ############################################
-# GLOBAL FLAGS
+# HELPER
 ############################################
-export CFLAGS="-arch $ARCH -mmacosx-version-min=11.0"
-export CXXFLAGS="$CFLAGS"
-export LDFLAGS="-arch $ARCH -mmacosx-version-min=11.0"
-export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+download_file () {
+  URL=$1
+  TARGET=$2
 
-cd "$SRC"
+  if [ -f "$TARGET" ]; then
+    echo "✔ $(basename "$TARGET") exists"
+    return
+  fi
 
-download() {
-  curl -L --fail -o "$2" "$1"
+  echo "⬇ Downloading $(basename "$TARGET")"
+  curl -L --fail -o "$TARGET" "$URL"
 }
 
 ############################################
-# ZLIB
+# DEPENDENCIES
 ############################################
-download https://zlib.net/zlib-1.3.tar.gz zlib.tar.gz
-tar -xzf zlib.tar.gz
-cd zlib-1.3
-./configure --prefix="$PREFIX"
-make -j$CPU
-make install
-cd ..
+echo "=== Downloading Dependencies ==="
+
+download_file \
+  https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz \
+  "$DEPS_DIR/zlib-1.3.tar.gz"
+
+download_file \
+  https://www.openssl.org/source/openssl-3.2.1.tar.gz \
+  "$DEPS_DIR/openssl-3.2.1.tar.gz"
+
+download_file \
+  https://github.com/unicode-org/icu/releases/download/release-74-2/icu4c-74_2-src.tgz \
+  "$DEPS_DIR/icu4c-74_2-src.tgz"
+
+download_file \
+  https://github.com/kkos/oniguruma/releases/download/v6.9.9/onig-6.9.9.tar.gz \
+  "$DEPS_DIR/onig-6.9.9.tar.gz"
 
 ############################################
-# OpenSSL
+# PHP VERSIONS
 ############################################
-download https://www.openssl.org/source/openssl-3.2.1.tar.gz openssl.tar.gz
-tar -xzf openssl.tar.gz
-cd openssl-3.2.1
-./Configure darwin64-arm64-cc shared no-tests --prefix="$PREFIX"
-make -j$CPU
-make install_sw
-cd ..
+echo
+echo "=== Downloading PHP Versions ==="
 
-############################################
-# ICU
-############################################
-download https://github.com/unicode-org/icu/releases/download/release-74-2/icu4c-74_2-src.tgz icu.tgz
-tar -xzf icu.tgz
-cd icu/source
-./configure --prefix="$PREFIX" --enable-shared --disable-static
-make -j$CPU
-make install
-cd ../..
+while IFS= read -r VERSION; do
+  # Skip comments and empty lines
+  [[ -z "$VERSION" || "$VERSION" =~ ^# ]] && continue
 
-############################################
-# Oniguruma
-############################################
-download https://github.com/kkos/oniguruma/releases/download/v6.9.9/onig-6.9.9.tar.gz onig.tar.gz
-tar -xzf onig.tar.gz
-cd onig-6.9.9
-./configure --prefix="$PREFIX" --enable-shared --disable-static
-make -j$CPU
-make install
-cd ..
+  FILE="php-$VERSION.tar.gz"
+  TARGET="$PHP_DIR/$FILE"
 
-############################################
-# PHP
-############################################
-download https://www.php.net/distributions/php-$PHP_VERSION.tar.gz php.tar.gz
-tar -xzf php.tar.gz
-cd php-$PHP_VERSION
+  if [ -f "$TARGET" ]; then
+    echo "✔ $FILE exists"
+    continue
+  fi
 
-export CPPFLAGS="-I$PREFIX/include"
-export LDFLAGS="-L$PREFIX/lib -Wl,-rpath,@loader_path/../../local/lib"
+  echo "⬇ Downloading PHP $VERSION"
 
-./configure \
-  --prefix="$PHP_PREFIX" \
-  --with-config-file-path="$PHP_PREFIX/etc" \
-  --with-config-file-scan-dir="$PHP_PREFIX/etc/conf.d" \
-  --enable-cli \
-  --enable-fpm \
-  --enable-opcache \
-  --enable-mbstring \
-  --enable-intl \
-  --enable-pcntl \
-  --enable-sockets \
-  --with-zlib="$PREFIX" \
-  --with-openssl="$PREFIX" \
-  --with-icu-dir="$PREFIX" \
-  --with-onig="$PREFIX" \
-  --with-sqlite3 \
-  --disable-static
+  MAIN_URL="https://www.php.net/distributions/$FILE"
+  ARCHIVE_URL="https://museum.php.net/php${VERSION%.*}/$FILE"
 
-make -j$CPU
-make install
+  if curl -L --fail -o "$TARGET" "$MAIN_URL"; then
+    echo "✔ Main mirror"
+  else
+    echo "Main failed → Trying archive"
+    curl -L --fail -o "$TARGET" "$ARCHIVE_URL"
+  fi
 
-mkdir -p "$PHP_PREFIX/etc/conf.d"
-cp php.ini-production "$PHP_PREFIX/etc/php.ini"
+  echo "--------------------------------"
+done < "$VERSION_FILE"
 
-############################################
-# RPATH FIX
-############################################
-install_name_tool -add_rpath @loader_path/../../local/lib "$PHP_PREFIX/bin/php"
-install_name_tool -add_rpath @loader_path/../../local/lib "$PHP_PREFIX/sbin/php-fpm"
-
-############################################
-# PECL
-############################################
-export PATH="$PHP_PREFIX/bin:$PATH"
-
-yes '' | pecl install apcu
-yes '' | pecl install redis
-yes '' | pecl install xdebug
-
-echo "extension=apcu.so" >> "$PHP_PREFIX/etc/php.ini"
-echo "extension=redis.so" >> "$PHP_PREFIX/etc/php.ini"
-echo "zend_extension=xdebug.so" >> "$PHP_PREFIX/etc/php.ini"
-
-echo "======================================"
-echo "✅ PHP $PHP_VERSION ARM64 BUILD DONE"
-echo "======================================"
+echo
+echo "✅ All downloads completed."

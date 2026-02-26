@@ -1,41 +1,47 @@
-name: Build PHP ARM64
+name: Build All PHP Versions (ARM64)
 
 on:
   workflow_dispatch:
 
 jobs:
+
+  generate-matrix:
+    runs-on: macos-14
+    outputs:
+      versions: ${{ steps.set-matrix.outputs.versions }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: set-matrix
+        run: |
+          VERSIONS=$(grep -v '^#' versions/php-versions.txt | grep -v '^$' | jq -R -s -c 'split("\n")[:-1]')
+          echo "versions=$VERSIONS" >> $GITHUB_OUTPUT
+
   build:
+    needs: generate-matrix
     runs-on: macos-14
 
     strategy:
       fail-fast: false
       matrix:
-        php_version:
-          # 8.1
-          - '8.1.0'
-          - '8.1.1'
-          # Add more gradually
-
-    name: PHP ${{ matrix.php_version }} ARM64
+        php_version: ${{ fromJson(needs.generate-matrix.outputs.versions) }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Make Script Executable
-        run: chmod +x scripts/build-php.sh
+      - run: chmod +x scripts/build-php.sh
 
       - name: Build PHP
         run: |
           bash scripts/build-php.sh ${{ matrix.php_version }}
 
-      - name: Verify
+      - name: Test PHP
         run: |
           ./output-${{ matrix.php_version }}/php-${{ matrix.php_version }}-arm64/bin/php -v
-          ./output-${{ matrix.php_version }}/php-${{ matrix.php_version }}-arm64/bin/php -m
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: php-${{ matrix.php_version }}-arm64
-          path: output-${{ matrix.php_version }}
+          path: output-${{ matrix.php_version }}/php-${{ matrix.php_version }}-arm64.zip

@@ -1,83 +1,117 @@
 #!/bin/bash
 set -e
 
-DEST_DIR="downloads"
-PHP_DIR="$DEST_DIR/php"
-DEPS_DIR="$DEST_DIR/deps"
-VERSION_FILE="versions/php-versions.txt"
+VERSION=$1
+ARCH="arm64"
 
-mkdir -p "$PHP_DIR"
-mkdir -p "$DEPS_DIR"
+if [ -z "$VERSION" ]; then
+  echo "❌ Provide PHP version"
+  exit 1
+fi
 
-############################################
-# HELPER
-############################################
-download_file () {
-  URL=$1
-  TARGET=$2
+ROOT="$(pwd)/output-$VERSION"
+SRC="$ROOT/src"
+PREFIX="$ROOT/local"
+FINAL="$ROOT/php-$VERSION-$ARCH"
 
-  if [ -f "$TARGET" ]; then
-    echo "✔ $(basename "$TARGET") exists"
-    return
-  fi
+CPU=$(sysctl -n hw.ncpu)
 
-  echo "⬇ Downloading $(basename "$TARGET")"
-  curl -L --fail -o "$TARGET" "$URL"
+mkdir -p "$SRC"
+mkdir -p "$PREFIX"
+
+########################################
+# VERIFY SOURCE
+########################################
+
+PHP_TARBALL="downloads/php/php-$VERSION.tar.gz"
+
+if [ ! -f "$PHP_TARBALL" ]; then
+  echo "❌ Missing $PHP_TARBALL"
+  exit 1
+fi
+
+########################################
+# BUILD DEPENDENCIES
+########################################
+
+cd "$SRC"
+
+build_shared() {
+  FILE=$1
+  DIR=$2
+
+  cp "$GITHUB_WORKSPACE/downloads/deps/$FILE" .
+  tar -xf "$FILE"
+  cd "$DIR"
+  ./configure --prefix="$PREFIX" --enable-shared --disable-static
+  make -j$CPU
+  make install
+  cd ..
 }
 
-############################################
-# DEPENDENCIES
-############################################
-echo "=== Downloading Dependencies ==="
+echo "📦 Building zlib"
+build_shared zlib-1.3.tar.gz zlib-1.3
 
-download_file \
-  https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz \
-  "$DEPS_DIR/zlib-1.3.tar.gz"
+echo "📦 Building Oniguruma"
+build_shared onig-6.9.9.tar.gz onig-6.9.9
 
-download_file \
-  https://www.openssl.org/source/openssl-3.2.1.tar.gz \
-  "$DEPS_DIR/openssl-3.2.1.tar.gz"
+echo "📦 Building OpenSSL"
+cp "$GITHUB_WORKSPACE/downloads/deps/openssl-3.2.1.tar.gz" .
+tar -xzf openssl-3.2.1.tar.gz
+cd openssl-3.2.1
+./Configure darwin64-arm64-cc shared no-tests --prefix="$PREFIX"
+make -j$CPU
+make install_sw
+cd ..
 
-download_file \
-  https://github.com/unicode-org/icu/releases/download/release-74-2/icu4c-74_2-src.tgz \
-  "$DEPS_DIR/icu4c-74_2-src.tgz"
+echo "📦 Building ICU"
+cp "$GITHUB_WORKSPACE/downloads/deps/icu4c-74_2-src.tgz" .
+tar -xzf icu4c-74_2-src.tgz
+cd icu/source
+./configure --prefix="$PREFIX" --enable-shared --disable-static
+make -j$CPU
+make install
+cd ../..
 
-download_file \
-  https://github.com/kkos/oniguruma/releases/download/v6.9.9/onig-6.9.9.tar.gz \
-  "$DEPS_DIR/onig-6.9.9.tar.gz"
+########################################
+# BUILD PHP
+########################################
 
-############################################
-# PHP VERSIONS
-############################################
-echo
-echo "=== Downloading PHP Versions ==="
+echo "⚙ Building PHP $VERSION"
 
-while IFS= read -r VERSION; do
-  # Skip comments and empty lines
-  [[ -z "$VERSION" || "$VERSION" =~ ^# ]] && continue
+cp "$GITHUB_WORKSPACE/$PHP_TARBALL" .
+tar -xzf "php-$VERSION.tar.gz"
+cd "php-$VERSION"
 
-  FILE="php-$VERSION.tar.gz"
-  TARGET="$PHP_DIR/$FILE"
+export CPPFLAGS="-I$PREFIX/include"
+export LDFLAGS="-L$PREFIX/lib -Wl,-rpath,@loader_path/../lib"
+export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 
-  if [ -f "$TARGET" ]; then
-    echo "✔ $FILE exists"
-    continue
-  fi
+./configure \
+  --prefix="$FINAL" \
+  --enable-cli \
+  --enable-fpm \
+  --enable-opcache \
+  --enable-mbstring \
+  --enable-intl \
+  --enable-bcmath \
+  --enable-pcntl \
+  --enable-sockets \
+  --with-zlib="$PREFIX" \
+  --with-openssl="$PREFIX" \
+  --with-icu-dir="$PREFIX" \
+  --with-onig="$PREFIX" \
+  --with-sqlite3 \
+  --disable-static
 
-  echo "⬇ Downloading PHP $VERSION"
+make -j$CPU
+make install
 
-  MAIN_URL="https://www.php.net/distributions/$FILE"
-  ARCHIVE_URL="https://museum.php.net/php${VERSION%.*}/$FILE"
+########################################
+# ZIP
+########################################
 
-  if curl -L --fail -o "$TARGET" "$MAIN_URL"; then
-    echo "✔ Main mirror"
-  else
-    echo "Main failed → Trying archive"
-    curl -L --fail -o "$TARGET" "$ARCHIVE_URL"
-  fi
+cd "$ROOT"
+zip -r "php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
 
-  echo "--------------------------------"
-done < "$VERSION_FILE"
-
-echo
-echo "✅ All downloads completed."
+echo "✅ Build complete"

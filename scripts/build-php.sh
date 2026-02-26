@@ -35,7 +35,7 @@ curl -L -o libiconv.tar.gz https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.17.ta
 tar -xzf libiconv.tar.gz
 cd libiconv-1.17
 ./configure --prefix="$PREFIX"
-make -j$CPU
+make -j$(($CPU-1))
 make install
 cd ..
 
@@ -45,7 +45,7 @@ cd ..
 tar -xzf "$GITHUB_WORKSPACE/downloads/deps/zlib-1.3.tar.gz"
 cd zlib-1.3
 ./configure --prefix="$PREFIX"
-make -j$CPU
+make -j$(($CPU-1))
 make install
 cd ..
 
@@ -55,7 +55,7 @@ cd ..
 tar -xzf "$GITHUB_WORKSPACE/downloads/deps/onig-6.9.9.tar.gz"
 cd onig-6.9.9
 ./configure --prefix="$PREFIX"
-make -j$CPU
+make -j$(($CPU-1))
 make install
 cd ..
 
@@ -65,7 +65,7 @@ cd ..
 tar -xzf "$GITHUB_WORKSPACE/downloads/deps/openssl-3.2.1.tar.gz"
 cd openssl-3.2.1
 ./Configure darwin64-arm64-cc --prefix="$PREFIX"
-make -j$CPU
+make -j$(($CPU-1))
 make install_sw
 cd ..
 
@@ -75,20 +75,24 @@ cd ..
 tar -xzf "$GITHUB_WORKSPACE/downloads/deps/icu4c-74_2-src.tgz"
 cd icu/source
 ./configure --prefix="$PREFIX"
-make -j$CPU
+make -j$(($CPU-1))
 make install
 cd ../..
 
 ########################################
-# BUILD PHP (OPCACHE BUILT-IN)
+# BUILD PHP
 ########################################
 tar -xzf "$GITHUB_WORKSPACE/$PHP_TARBALL"
 cd "php-$VERSION"
 
-# 🔥 Correct environment (important)
+# 🔥 CLEAN ENV (CRITICAL FOR OPcache)
+unset CFLAGS
+unset CPPFLAGS
+unset LDFLAGS
+unset LIBS
+
 export CPPFLAGS="-I$PREFIX/include"
-export LDFLAGS="-L$PREFIX/lib -Wl,-rpath,$PREFIX/lib"
-export LIBS="-lresolv"
+export LDFLAGS="-L$PREFIX/lib"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 
 ./configure \
@@ -119,11 +123,11 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
   --with-mysqli=mysqlnd \
   --with-pdo-mysql=mysqlnd
 
-make -j$CPU
+make -j$(($CPU-1))
 make install
 
 ########################################
-# CREATE php.ini
+# CREATE php.ini WITH OPCACHE
 ########################################
 mkdir -p "$FINAL/lib"
 

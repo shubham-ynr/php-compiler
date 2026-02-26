@@ -7,21 +7,28 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$SCRIPT_DIR"
 
-# Input validation
-if [ -z "$1" ]; then
-  echo "Usage: ./build.sh 8.1.7"
-  exit 1
-fi
-
 VERSION=$1
 ARCH="arm64"
 CPU=$(sysctl -n hw.ncpu)
 
-CACHE="$WORK/.cache"
+if [ -z "$VERSION" ]; then
+  echo "Usage: ./build.sh 8.1.7"
+  exit 1
+fi
+
+# YEH HAI JUGAAD: YAML ke path se match karne ke liye
+FINAL_OUT_DIR="$WORK/output-$VERSION"
+mkdir -p "$FINAL_OUT_DIR"
+
+############################################
+# CACHE STRUCTURE
+############################################
+CACHE="$WORK/.global-deps"
 DEPS="$CACHE/deps"
 SRC="$CACHE/src"
 
-mkdir -p "$DEPS" "$SRC"
+mkdir -p "$DEPS"
+mkdir -p "$SRC"
 
 ############################################
 # DOWNLOAD HELPER
@@ -36,68 +43,78 @@ download() {
 }
 
 ############################################
-# BUILD DEPENDENCIES (STATIC WHERE POSSIBLE)
+# BUILD DEPENDENCIES (ONCE)
 ############################################
 if [ ! -f "$DEPS/lib/libicuuc.a" ]; then
+
   echo "🔧 Building global dependencies..."
+
   cd "$SRC"
 
-  # LIBICONV
+  # LIBICONV (STATIC)
   download https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.17.tar.gz iconv.tar.gz
-  tar -xzf iconv.tar.gz && cd libiconv-1.17
+  tar -xzf iconv.tar.gz
+  cd libiconv-1.17
   ./configure --prefix="$DEPS" --enable-static --disable-shared
   make -j$CPU && make install
   cd ..
 
   # ZLIB
   download https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz zlib.tar.gz
-  tar -xzf zlib.tar.gz && cd zlib-1.3
+  tar -xzf zlib.tar.gz
+  cd zlib-1.3
   ./configure --prefix="$DEPS" --static
   make -j$CPU && make install
   cd ..
 
-  # OPENSSL (Keeping it dynamic but portable as per your original logic)
+  # OPENSSL
   download https://www.openssl.org/source/openssl-3.2.1.tar.gz openssl.tar.gz
-  tar -xzf openssl.tar.gz && cd openssl-3.2.1
-  ./Configure darwin64-arm64-cc --prefix="$DEPS" no-shared # Change to no-shared if you want fully static
+  tar -xzf openssl.tar.gz
+  cd openssl-3.2.1
+  ./Configure darwin64-arm64-cc --prefix="$DEPS"
   make -j$CPU && make install_sw
   cd ..
 
   # ONIGURUMA
   download https://github.com/kkos/oniguruma/releases/download/v6.9.9/onig-6.9.9.tar.gz onig.tar.gz
-  tar -xzf onig.tar.gz && cd onig-6.9.9
+  tar -xzf onig.tar.gz
+  cd onig-6.9.9
   ./configure --prefix="$DEPS" --enable-static --disable-shared
   make -j$CPU && make install
   cd ..
 
-  # ICU
+  # ICU (STATIC ONLY)
   download https://github.com/unicode-org/icu/releases/download/release-74-2/icu4c-74_2-src.tgz icu.tgz
-  tar -xzf icu.tgz && cd icu/source
+  tar -xzf icu.tgz
+  cd icu/source
   ./configure --prefix="$DEPS" --enable-static --disable-shared
   make -j$CPU && make install
   cd ../..
+
 fi
 
 ############################################
 # BUILD PHP
 ############################################
 cd "$SRC"
+
 download https://www.php.net/distributions/php-$VERSION.tar.gz php.tar.gz
 rm -rf php-$VERSION
 tar -xzf php.tar.gz
 cd php-$VERSION
+
+unset CFLAGS CPPFLAGS LDFLAGS LIBS
 
 export CPPFLAGS="-I$DEPS/include"
 export LDFLAGS="-L$DEPS/lib"
 export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
 export LIBS="-lresolv"
 
+# Destination path
 FINAL="$WORK/php-$VERSION-$ARCH"
 
-# Note: We keep --prefix, but we will override path logic at runtime
 ./configure \
   --prefix="$FINAL" \
-  --without-pear \
   --with-config-file-path="$FINAL/etc" \
   --enable-cli \
   --enable-fpm \
@@ -106,32 +123,39 @@ FINAL="$WORK/php-$VERSION-$ARCH"
   --enable-bcmath \
   --enable-pcntl \
   --enable-sockets \
+  --enable-calendar \
+  --enable-exif \
+  --enable-fileinfo \
+  --enable-filter \
+  --enable-session \
+  --enable-tokenizer \
+  --enable-xml \
   --with-zlib="$DEPS" \
   --with-openssl="$DEPS" \
   --with-icu-dir="$DEPS" \
   --with-onig="$DEPS" \
   --with-iconv="$DEPS" \
+  --with-sqlite3 \
   --with-mysqli=mysqlnd \
-  --with-pdo-mysql=mysqlnd
+  --with-pdo-mysql=mysqlnd \
+  --without-pear
 
 make -j$CPU
 make install
 
 ############################################
-# SETUP PRODUCTION INI & RELATIVE PATHS
+# PRODUCTION INI SETUP (Tera Manga Hua Feature)
 ############################################
-echo "📂 Setting up Production Config..."
+echo "📂 Moving Production INI..."
 mkdir -p "$FINAL/etc"
 cp php.ini-production "$FINAL/etc/php.ini"
 
-# Extension directory ko relative banana (Very Important)
-# PHP binary ke relative extensions dhoondne ke liye:
-sed -i '' "s|;extension_dir = \"\./\"|extension_dir = \"../lib/php/extensions/no-debug-non-zts-20210902/\"|g" "$FINAL/etc/php.ini"
+# Relative extension path fix
+sed -i '' "s|;extension_dir = \"\./\"|extension_dir = \"./\"|g" "$FINAL/etc/php.ini"
 
-# Add your custom optimizations to the end of production ini
 cat >> "$FINAL/etc/php.ini" <<EOF
 
-; --- PORTABLE SETTINGS ---
+; --- CUSTOM OPTIMIZATIONS ---
 zend_extension=opcache
 opcache.enable=1
 opcache.enable_cli=1
@@ -143,11 +167,12 @@ EOF
 # FIX OPENSSL PATHS (PORTABLE)
 ############################################
 echo "🔧 Fixing OpenSSL linkage..."
+
 BIN="$FINAL/bin/php"
 LIBDIR="$FINAL/lib"
+
 mkdir -p "$LIBDIR"
 
-# Copy dynamic libs to local lib folder
 for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
   if [ -f "$DEPS/lib/$lib" ]; then
     cp "$DEPS/lib/$lib" "$LIBDIR/"
@@ -157,18 +182,19 @@ for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
   fi
 done
 
-# Add RPATH to binary so it looks in ../lib relative to itself
-install_name_tool -add_rpath "@executable_path/../lib" "$BIN"
+if ! otool -l "$BIN" | grep -q "@executable_path/../lib"; then
+  install_name_tool -add_rpath "@executable_path/../lib" "$BIN"
+fi
 
 ############################################
-# THE "JUGAAD" WRAPPER
+# PACKAGE (Fixes the GitHub Artifact Error)
 ############################################
-# Ye file 'php' ko replace karegi takki user ko -c na likhna pade
-cat > "$FINAL/bin/php-portable" <<'EOF'
-#!/bin/bash
-PRG_PATH="$(cd "$(dirname "$0")" && pwd)"
-$PRG_PATH/php -c "$PRG_PATH/../etc/php.ini" "$@"
-EOF
-chmod +x "$FINAL/bin/php-portable"
+cd "$WORK"
+echo "📦 Packaging for GitHub..."
+zip -r "$FINAL_OUT_DIR/php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
 
-echo "✅ PHP $VERSION built and patched for portability!"
+echo ""
+echo "======================================"
+echo "✅ PHP $VERSION built successfully"
+echo "Location: $FINAL_OUT_DIR/php-$VERSION-$ARCH.zip"
+echo "======================================"

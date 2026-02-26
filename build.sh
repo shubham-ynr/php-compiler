@@ -23,7 +23,6 @@ mkdir -p "$FINAL_OUT_DIR"
 ############################################
 # CACHE STRUCTURE
 ############################################
-# YAML matrix ke hisaab se cache folder set kiya
 CACHE="$WORK/.global-deps"
 DEPS="$CACHE/deps"
 SRC="$CACHE/src"
@@ -47,65 +46,55 @@ download() {
 # BUILD DEPENDENCIES (ONCE)
 ############################################
 if [ ! -f "$DEPS/lib/libicuuc.a" ]; then
-
   echo "🔧 Building global dependencies..."
-
   cd "$SRC"
 
-  # LIBICONV (STATIC)
+  # LIBICONV
   download https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.17.tar.gz iconv.tar.gz
-  tar -xzf iconv.tar.gz
-  cd libiconv-1.17
+  tar -xzf iconv.tar.gz && cd libiconv-1.17
   ./configure --prefix="$DEPS" --enable-static --disable-shared
   make -j$CPU && make install
   cd ..
 
   # ZLIB
   download https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz zlib.tar.gz
-  tar -xzf zlib.tar.gz
-  cd zlib-1.3
+  tar -xzf zlib.tar.gz && cd zlib-1.3
   ./configure --prefix="$DEPS"
   make -j$CPU && make install
   cd ..
 
   # OPENSSL
   download https://www.openssl.org/source/openssl-3.2.1.tar.gz openssl.tar.gz
-  tar -xzf openssl.tar.gz
-  cd openssl-3.2.1
+  tar -xzf openssl.tar.gz && cd openssl-3.2.1
   ./Configure darwin64-arm64-cc --prefix="$DEPS"
   make -j$CPU && make install_sw
   cd ..
 
   # ONIGURUMA
   download https://github.com/kkos/oniguruma/releases/download/v6.9.9/onig-6.9.9.tar.gz onig.tar.gz
-  tar -xzf onig.tar.gz
-  cd onig-6.9.9
+  tar -xzf onig.tar.gz && cd onig-6.9.9
   ./configure --prefix="$DEPS"
   make -j$CPU && make install
   cd ..
 
-  # ICU (STATIC ONLY)
+  # ICU
   download https://github.com/unicode-org/icu/releases/download/release-74-2/icu4c-74_2-src.tgz icu.tgz
-  tar -xzf icu.tgz
-  cd icu/source
+  tar -xzf icu.tgz && cd icu/source
   ./configure --prefix="$DEPS" --enable-static --disable-shared
   make -j$CPU && make install
   cd ../..
-
 fi
 
 ############################################
 # BUILD PHP
 ############################################
 cd "$SRC"
-
 download https://www.php.net/distributions/php-$VERSION.tar.gz php.tar.gz
 rm -rf php-$VERSION
 tar -xzf php.tar.gz
 cd php-$VERSION
 
 unset CFLAGS CPPFLAGS LDFLAGS LIBS
-
 export CPPFLAGS="-I$DEPS/include"
 export LDFLAGS="-L$DEPS/lib"
 export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
@@ -145,18 +134,17 @@ make -j$CPU
 make install
 
 ############################################
-# FIX OPENSSL & DYLD PATHS (PORTABLE)
+# FIX LIBRARIES & PORTABILITY (MAMP Logic)
 ############################################
-echo "🔧 Fixing OpenSSL linkage & DYLD paths..."
-
+echo "🔧 Patching Binaries for Portability..."
 BIN="$FINAL/bin/php"
 LIBDIR="$FINAL/lib"
 mkdir -p "$LIBDIR"
 
-# Sabhi .dylib dependencies ko copy karo
+# Copy all dynamic libs to bundle
 cp "$DEPS"/lib/*.dylib "$LIBDIR/" || true
 
-# Binary ko patch karo
+# Fix Binary to Rpath
 for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
   if [ -f "$LIBDIR/$lib" ]; then
     chmod 755 "$LIBDIR/$lib"
@@ -165,48 +153,57 @@ for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
   fi
 done
 
-# Asli Fix: libssl.3.dylib ke andar libcrypto ka path thik karna
+# Fix Internal Lib Linking (libssl -> libcrypto)
 if [ -f "$LIBDIR/libssl.3.dylib" ]; then
   install_name_tool -change "$DEPS/lib/libcrypto.3.dylib" "@rpath/libcrypto.3.dylib" "$LIBDIR/libssl.3.dylib"
 fi
 
-# Rpath add karo
-if ! otool -l "$BIN" | grep -q "@executable_path/../lib"; then
-  install_name_tool -add_rpath "@executable_path/../lib" "$BIN"
-fi
+install_name_tool -add_rpath "@executable_path/../lib" "$BIN" || true
 
 ############################################
-# FIX PECL/PEAR PATHS
+# PECL & WRAPPERS
 ############################################
+echo "📝 Creating Wrappers..."
+
+# PECL Relative Path Fix
 if [ -f "$FINAL/bin/pecl" ]; then
   sed -i '' "s|$FINAL|\$(cd \"\$(dirname \"\$0\")/..\" \&\& pwd)|g" "$FINAL/bin/pecl"
   sed -i '' "s|$FINAL|\$(cd \"\$(dirname \"\$0\")/..\" \&\& pwd)|g" "$FINAL/bin/pear"
 fi
 
-############################################
-# CREATE php.ini (Production Quality)
-############################################
-# Source folder se production ini uthao
+# php-run Wrapper (MAMP Style)
+cat > "$FINAL/bin/php-run" <<'EOF'
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+export PHPRC="$DIR/../lib/php.ini"
+export DYLD_LIBRARY_PATH="$DIR/../lib:$DYLD_LIBRARY_PATH"
+exec "$DIR/php" "$@"
+EOF
+chmod +x "$FINAL/bin/php-run"
+
+# setup.sh (Security Fixer)
+cat > "$FINAL/setup.sh" <<'EOF'
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+echo "🔐 Fixing Mac Permissions..."
+xattr -rd com.apple.quarantine "$DIR" || true
+chmod +x "$DIR/bin/php" "$DIR/bin/php-run" "$DIR/bin/pecl" || true
+echo "✅ Ready! Use ./bin/php-run"
+EOF
+chmod +x "$FINAL/setup.sh"
+
+# PHP.INI (Production)
 cp "$SRC/php-$VERSION/php.ini-production" "$FINAL/lib/php.ini"
-
 cat >> "$FINAL/lib/php.ini" <<EOF
-
-; --- CUSTOM CONFIG ---
 zend_extension=opcache
 opcache.enable=1
 opcache.enable_cli=1
-opcache.jit=0
-pcre.jit=0
 EOF
 
 ############################################
 # PACKAGE
 ############################################
 cd "$WORK"
-# YAML matrix ke expected output folder mein zip save karna
-zip -r "$FINAL_OUT_DIR/php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
+zip -ry "$FINAL_OUT_DIR/php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
 
-echo ""
-echo "======================================"
-echo "✅ PHP $VERSION built successfully with PECL"
-echo "======================================"
+echo "✅ PHP $VERSION built and packaged successfully."

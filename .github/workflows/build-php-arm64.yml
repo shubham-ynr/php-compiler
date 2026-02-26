@@ -1,6 +1,9 @@
 name: Build All PHP Versions (ARM64)
 
 on:
+  push:
+    branches:
+      - "**"     # Har branch pe run hoga
   workflow_dispatch:
 
 jobs:
@@ -23,17 +26,17 @@ jobs:
     runs-on: macos-14
 
     strategy:
-      fail-fast: false
+      fail-fast: true   # 🔥 1 fail → sab cancel
       matrix:
         php_version: ${{ fromJson(needs.generate-matrix.outputs.versions) }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Make script executable
+      - name: Make build script executable
         run: chmod +x scripts/build-php.sh
 
-      - name: Verify downloads exist
+      - name: Verify downloads
         run: |
           echo "PHP Sources:"
           ls -lah downloads/php | head
@@ -51,11 +54,13 @@ jobs:
             echo "❌ PHP binary not found"
             exit 1
           fi
+
           echo "PHP Version:"
           $PHP_PATH -v
+
           echo ""
           echo "Loaded Extensions:"
-          $PHP_PATH -m | grep -i opcache || true
+          $PHP_PATH -m | grep -i opcache
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

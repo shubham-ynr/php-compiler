@@ -85,8 +85,10 @@ cd ../..
 tar -xzf "$GITHUB_WORKSPACE/$PHP_TARBALL"
 cd "php-$VERSION"
 
+# 🔥 Correct environment (important)
 export CPPFLAGS="-I$PREFIX/include"
-export LDFLAGS="-L$PREFIX/lib -Wl,-rpath,$PREFIX/lib -lresolv"
+export LDFLAGS="-L$PREFIX/lib -Wl,-rpath,$PREFIX/lib"
+export LIBS="-lresolv"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 
 ./configure \
@@ -145,4 +147,5 @@ EOF
 cd "$ROOT"
 zip -r "php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
 
+echo ""
 echo "✅ PHP $VERSION ARM64 build complete with OPcache"

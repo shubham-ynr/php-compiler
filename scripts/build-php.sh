@@ -80,12 +80,12 @@ make install
 cd ../..
 
 ########################################
-# BUILD PHP
+# BUILD PHP CORE (OPCACHE DISABLED)
 ########################################
 tar -xzf "$GITHUB_WORKSPACE/$PHP_TARBALL"
 cd "php-$VERSION"
 
-# 🔥 CLEAN ENV (CRITICAL FOR OPcache)
+# CLEAN ENV (important)
 unset CFLAGS
 unset CPPFLAGS
 unset LDFLAGS
@@ -111,9 +111,7 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
   --enable-session \
   --enable-tokenizer \
   --enable-xml \
-  --enable-opcache \
-  --disable-huge-code-pages \
-  --disable-opcache-jit \
+  --disable-opcache \
   --with-zlib="$PREFIX" \
   --with-openssl="$PREFIX" \
   --with-icu-dir="$PREFIX" \
@@ -127,7 +125,22 @@ make -j$(($CPU-1))
 make install
 
 ########################################
-# CREATE php.ini WITH OPCACHE
+# BUILD OPCACHE SEPARATELY
+########################################
+cd ext/opcache
+
+"$FINAL/bin/phpize"
+
+./configure \
+  --with-php-config="$FINAL/bin/php-config" \
+  --disable-huge-code-pages \
+  --disable-opcache-jit
+
+make -j$(($CPU-1))
+make install
+
+########################################
+# CREATE php.ini
 ########################################
 mkdir -p "$FINAL/lib"
 

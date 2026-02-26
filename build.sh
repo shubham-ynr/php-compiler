@@ -1,10 +1,15 @@
 #!/bin/bash
 set -e
 
+############################################
+# SAFE SCRIPT DIRECTORY
+############################################
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORK="$SCRIPT_DIR"
+
 VERSION=$1
 ARCH="arm64"
 CPU=$(sysctl -n hw.ncpu)
-WORK="$(pwd)"
 
 if [ -z "$VERSION" ]; then
   echo "Usage: ./build.sh 8.1.6"
@@ -12,10 +17,11 @@ if [ -z "$VERSION" ]; then
 fi
 
 ############################################
-# GLOBAL CACHE
+# CACHE DIRECTORIES
 ############################################
-GLOBAL_DEPS="$WORK/.global-deps"
-TOOLCHAIN="$WORK/.toolchain"
+CACHE_DIR="$WORK/.cache"
+GLOBAL_DEPS="$CACHE_DIR/deps"
+TOOLCHAIN="$CACHE_DIR/toolchain"
 
 mkdir -p "$GLOBAL_DEPS"
 mkdir -p "$TOOLCHAIN"
@@ -27,7 +33,7 @@ download() {
   URL=$1
   FILE=$2
   if [ ! -f "$FILE" ]; then
-    echo "⬇ Downloading $(basename $FILE)"
+    echo "⬇ Downloading $(basename "$FILE")"
     curl -L --fail -o "$FILE" "$URL"
   fi
 }
@@ -50,12 +56,10 @@ fi
 export PATH="$TOOLCHAIN/bin:$PATH"
 
 ############################################
-# BUILD GLOBAL DEPENDENCIES (ONLY ONCE)
+# BUILD GLOBAL DEPENDENCIES (ONCE)
 ############################################
 if [ ! -f "$GLOBAL_DEPS/lib/libz.a" ]; then
-
   echo "🔧 Building global dependencies..."
-
   cd "$WORK"
 
   # libiconv
@@ -97,7 +101,6 @@ if [ ! -f "$GLOBAL_DEPS/lib/libz.a" ]; then
   ./configure --prefix="$GLOBAL_DEPS"
   make -j$CPU && make install
   cd ../..
-
 fi
 
 ############################################
@@ -116,7 +119,6 @@ unset CFLAGS CPPFLAGS LDFLAGS LIBS
 
 export CPPFLAGS="-I$GLOBAL_DEPS/include"
 export LDFLAGS="-L$GLOBAL_DEPS/lib"
-export DYLD_LIBRARY_PATH="$GLOBAL_DEPS/lib"
 export PKG_CONFIG_PATH="$GLOBAL_DEPS/lib/pkgconfig"
 export LIBS="-lresolv"
 
@@ -150,36 +152,31 @@ make -j$CPU
 make install
 
 ############################################
-# COPY ALL DYLIBS
+# COPY DYLIBS
 ############################################
 mkdir -p "$FINAL/lib"
 cp "$GLOBAL_DEPS/lib/"*.dylib "$FINAL/lib/" || true
 
 ############################################
-# FIX INSTALL NAMES (FULL ICU SAFE)
+# FIX INSTALL NAMES (ICU SAFE + FULL)
 ############################################
-echo "🔧 Fixing dylib install names..."
+echo "🔧 Fixing install names..."
 
-# Fix self IDs
+# Fix self ids
 for lib in "$FINAL"/lib/*.dylib; do
     base=$(basename "$lib")
     install_name_tool -id "@rpath/$base" "$lib"
 done
 
-# Fix inter-dependencies
+# Fix php references (absolute + plain)
 for lib in "$FINAL"/lib/*.dylib; do
-    for dep in "$FINAL"/lib/*.dylib; do
-        depbase=$(basename "$dep")
-        install_name_tool -change "$GLOBAL_DEPS/lib/$depbase" "@rpath/$depbase" "$lib" 2>/dev/null || true
-    done
+    base=$(basename "$lib")
+
+    install_name_tool -change "$GLOBAL_DEPS/lib/$base" "@rpath/$base" "$FINAL/bin/php" 2>/dev/null || true
+    install_name_tool -change "$base" "@rpath/$base" "$FINAL/bin/php" 2>/dev/null || true
 done
 
-# Fix php binary references
-for dep in "$FINAL"/lib/*.dylib; do
-    depbase=$(basename "$dep")
-    install_name_tool -change "$GLOBAL_DEPS/lib/$depbase" "@rpath/$depbase" "$FINAL/bin/php" 2>/dev/null || true
-done
-
+# Add runtime relative path
 install_name_tool -add_rpath "@loader_path/../lib" "$FINAL/bin/php" 2>/dev/null || true
 
 ############################################
@@ -197,7 +194,7 @@ make -j$CPU
 make install
 
 ############################################
-# php.ini
+# CREATE php.ini
 ############################################
 mkdir -p "$FINAL/lib"
 
@@ -209,10 +206,15 @@ opcache.jit=0
 EOF
 
 ############################################
-# VERIFY
+# VERIFY RELOCATION SAFETY
 ############################################
-echo "🔎 Verifying..."
-"$FINAL/bin/php" -v
+echo "🔍 Checking for absolute paths..."
+if otool -L "$FINAL/bin/php" | grep "$WORK" ; then
+  echo "❌ Absolute path detected inside binary!"
+  exit 1
+else
+  echo "✅ Binary is fully relocatable"
+fi
 
 ############################################
 # PACKAGE

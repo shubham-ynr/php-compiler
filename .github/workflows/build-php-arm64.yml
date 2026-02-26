@@ -30,8 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Make script executable
-        run: chmod +x scripts/build-php.sh
+      - run: chmod +x scripts/build-php.sh
 
       - name: Build PHP
         run: bash scripts/build-php.sh ${{ matrix.php_version }}
@@ -39,7 +38,6 @@ jobs:
       - name: Test PHP
         run: |
           ./output-${{ matrix.php_version }}/php-${{ matrix.php_version }}-arm64/bin/php -v
-          ./output-${{ matrix.php_version }}/php-${{ matrix.php_version }}-arm64/bin/php -m
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

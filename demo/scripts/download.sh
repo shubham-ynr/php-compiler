@@ -22,7 +22,7 @@ download https://ftp.gnu.org/gnu/automake/automake-1.16.5.tar.gz $DEST/toolchain
 download https://ftp.gnu.org/gnu/libtool/libtool-2.4.7.tar.gz $DEST/toolchain/libtool-2.4.7.tar.gz
 download https://pkgconfig.freedesktop.org/releases/pkg-config-0.29.2.tar.gz $DEST/toolchain/pkg-config-0.29.2.tar.gz
 download https://ftp.gnu.org/gnu/bison/bison-3.8.2.tar.gz $DEST/toolchain/bison-3.8.2.tar.gz
-download https://github.com/skvadrik/re2c/releases/download/3.1/re2c-3.1.tar.gz $DEST/toolchain/re2c-3.1.tar.gz
+download https://github.com/skvadrik/re2c/releases/download/3.1/re2c-3.1.tar.xz $DEST/toolchain/re2c-3.1.tar.xz
 
 echo "=== PHP ==="
 while read V; do

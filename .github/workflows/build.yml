@@ -1,0 +1,27 @@
+name: PHP Complete Builder ARM64
+
+on:
+  push:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Master Build Script
+        run: |
+          chmod +x build-all.sh
+          bash build-all.sh
+
+      - name: Archive Builds
+        run: |
+          for dir in output-*; do
+            zip -r "$dir.zip" "$dir"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: php-builds
+          path: output-*.zip

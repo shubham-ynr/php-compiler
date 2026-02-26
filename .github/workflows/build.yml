@@ -2,6 +2,8 @@ name: PHP Massive Matrix ARM64 Cached
 
 on:
   push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -115,28 +117,20 @@ jobs:
           - 8.5.3
 
     steps:
-      - uses: actions/checkout@v4
-
-      ###################################
-      # CACHE TOOLCHAIN
-      ###################################
-      - name: Cache Toolchain
-        uses: actions/cache@v4
-        with:
-          path: .toolchain
-          key: toolchain-v1
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       ###################################
       # CACHE GLOBAL DEPS
       ###################################
-      - name: Cache Global Deps
+      - name: Cache Global Dependencies
         uses: actions/cache@v4
         with:
           path: .global-deps
           key: global-deps-v1
 
       ###################################
-      # BUILD
+      # BUILD PROCESS
       ###################################
       - name: Build PHP ${{ matrix.php }}
         run: |
@@ -144,12 +138,16 @@ jobs:
           ./build.sh ${{ matrix.php }}
 
       ###################################
-      # UPLOAD ARTIFACT (Synced with build.sh)
+      # UPLOAD RESULT
       ###################################
-      - name: Upload PHP Binary
+      - name: Upload PHP Binary Artifact
         uses: actions/upload-artifact@v4
         with:
+          # Artifact name unique hona chahiye
           name: php-${{ matrix.php }}-arm64
-          # Ab ye path bilkul sahi hai kyunki build.sh 'output-x.x.x' folder bana raha hai
+          # Ye path build.sh ke FINAL_OUT_DIR se match kar raha hai
           path: output-${{ matrix.php }}/php-${{ matrix.php }}-arm64.zip
+          # Agar file nahi mili toh build fail ho jaye (tujhe pata chal jayega)
           if-no-files-found: error
+          # Artifacts ko kitne din tak rakhna hai (optional)
+          retention-days: 7

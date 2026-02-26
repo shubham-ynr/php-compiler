@@ -16,13 +16,14 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-# YEH HAI JUGAAD: YAML ke path se match karne ke liye
+# YAML ke expected folder ke liye
 FINAL_OUT_DIR="$WORK/output-$VERSION"
 mkdir -p "$FINAL_OUT_DIR"
 
 ############################################
 # CACHE STRUCTURE
 ############################################
+# YAML matrix ke hisaab se cache folder set kiya
 CACHE="$WORK/.global-deps"
 DEPS="$CACHE/deps"
 SRC="$CACHE/src"
@@ -63,7 +64,7 @@ if [ ! -f "$DEPS/lib/libicuuc.a" ]; then
   download https://github.com/madler/zlib/releases/download/v1.3/zlib-1.3.tar.gz zlib.tar.gz
   tar -xzf zlib.tar.gz
   cd zlib-1.3
-  ./configure --prefix="$DEPS" --static
+  ./configure --prefix="$DEPS"
   make -j$CPU && make install
   cd ..
 
@@ -79,7 +80,7 @@ if [ ! -f "$DEPS/lib/libicuuc.a" ]; then
   download https://github.com/kkos/oniguruma/releases/download/v6.9.9/onig-6.9.9.tar.gz onig.tar.gz
   tar -xzf onig.tar.gz
   cd onig-6.9.9
-  ./configure --prefix="$DEPS" --enable-static --disable-shared
+  ./configure --prefix="$DEPS"
   make -j$CPU && make install
   cd ..
 
@@ -110,12 +111,11 @@ export LDFLAGS="-L$DEPS/lib"
 export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
 export LIBS="-lresolv"
 
-# Destination path
 FINAL="$WORK/php-$VERSION-$ARCH"
 
 ./configure \
   --prefix="$FINAL" \
-  --with-config-file-path="$FINAL/etc" \
+  --with-config-file-path="$FINAL/lib" \
   --enable-cli \
   --enable-fpm \
   --enable-mbstring \
@@ -138,24 +138,60 @@ FINAL="$WORK/php-$VERSION-$ARCH"
   --with-sqlite3 \
   --with-mysqli=mysqlnd \
   --with-pdo-mysql=mysqlnd \
-  --without-pear
+  --enable-shared \
+  --with-pear
 
 make -j$CPU
 make install
 
 ############################################
-# PRODUCTION INI SETUP (Tera Manga Hua Feature)
+# FIX OPENSSL & DYLD PATHS (PORTABLE)
 ############################################
-echo "📂 Moving Production INI..."
-mkdir -p "$FINAL/etc"
-cp php.ini-production "$FINAL/etc/php.ini"
+echo "🔧 Fixing OpenSSL linkage & DYLD paths..."
 
-# Relative extension path fix
-sed -i '' "s|;extension_dir = \"\./\"|extension_dir = \"./\"|g" "$FINAL/etc/php.ini"
+BIN="$FINAL/bin/php"
+LIBDIR="$FINAL/lib"
+mkdir -p "$LIBDIR"
 
-cat >> "$FINAL/etc/php.ini" <<EOF
+# Sabhi .dylib dependencies ko copy karo
+cp "$DEPS"/lib/*.dylib "$LIBDIR/" || true
 
-; --- CUSTOM OPTIMIZATIONS ---
+# Binary ko patch karo
+for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
+  if [ -f "$LIBDIR/$lib" ]; then
+    chmod 755 "$LIBDIR/$lib"
+    install_name_tool -id "@rpath/$lib" "$LIBDIR/$lib"
+    install_name_tool -change "$DEPS/lib/$lib" "@rpath/$lib" "$BIN"
+  fi
+done
+
+# Asli Fix: libssl.3.dylib ke andar libcrypto ka path thik karna
+if [ -f "$LIBDIR/libssl.3.dylib" ]; then
+  install_name_tool -change "$DEPS/lib/libcrypto.3.dylib" "@rpath/libcrypto.3.dylib" "$LIBDIR/libssl.3.dylib"
+fi
+
+# Rpath add karo
+if ! otool -l "$BIN" | grep -q "@executable_path/../lib"; then
+  install_name_tool -add_rpath "@executable_path/../lib" "$BIN"
+fi
+
+############################################
+# FIX PECL/PEAR PATHS
+############################################
+if [ -f "$FINAL/bin/pecl" ]; then
+  sed -i '' "s|$FINAL|\$(cd \"\$(dirname \"\$0\")/..\" \&\& pwd)|g" "$FINAL/bin/pecl"
+  sed -i '' "s|$FINAL|\$(cd \"\$(dirname \"\$0\")/..\" \&\& pwd)|g" "$FINAL/bin/pear"
+fi
+
+############################################
+# CREATE php.ini (Production Quality)
+############################################
+# Source folder se production ini uthao
+cp "$SRC/php-$VERSION/php.ini-production" "$FINAL/lib/php.ini"
+
+cat >> "$FINAL/lib/php.ini" <<EOF
+
+; --- CUSTOM CONFIG ---
 zend_extension=opcache
 opcache.enable=1
 opcache.enable_cli=1
@@ -164,37 +200,13 @@ pcre.jit=0
 EOF
 
 ############################################
-# FIX OPENSSL PATHS (PORTABLE)
-############################################
-echo "🔧 Fixing OpenSSL linkage..."
-
-BIN="$FINAL/bin/php"
-LIBDIR="$FINAL/lib"
-
-mkdir -p "$LIBDIR"
-
-for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
-  if [ -f "$DEPS/lib/$lib" ]; then
-    cp "$DEPS/lib/$lib" "$LIBDIR/"
-    chmod 755 "$LIBDIR/$lib"
-    install_name_tool -id "@rpath/$lib" "$LIBDIR/$lib"
-    install_name_tool -change "$DEPS/lib/$lib" "@rpath/$lib" "$BIN"
-  fi
-done
-
-if ! otool -l "$BIN" | grep -q "@executable_path/../lib"; then
-  install_name_tool -add_rpath "@executable_path/../lib" "$BIN"
-fi
-
-############################################
-# PACKAGE (Fixes the GitHub Artifact Error)
+# PACKAGE
 ############################################
 cd "$WORK"
-echo "📦 Packaging for GitHub..."
+# YAML matrix ke expected output folder mein zip save karna
 zip -r "$FINAL_OUT_DIR/php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
 
 echo ""
 echo "======================================"
-echo "✅ PHP $VERSION built successfully"
-echo "Location: $FINAL_OUT_DIR/php-$VERSION-$ARCH.zip"
+echo "✅ PHP $VERSION built successfully with PECL"
 echo "======================================"

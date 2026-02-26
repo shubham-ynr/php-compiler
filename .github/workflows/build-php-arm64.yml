@@ -1,68 +1,55 @@
-name: Build All PHP Versions (ARM64 Sequential)
+name: PHP Offline Builder ARM64
 
 on:
   push:
-    branches:
-      - main
 
 jobs:
   build:
     runs-on: macos-14
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Make build script executable
-        run: chmod +x scripts/build-php.sh
-
-      - name: Verify downloads
+      - name: Download Sources
         run: |
-          echo "📦 PHP Sources:"
-          ls -lah downloads/php || true
-          echo ""
-          echo "📦 Dependencies:"
-          ls -lah downloads/deps || true
+          chmod +x scripts/download.sh
+          bash scripts/download.sh
 
-      - name: Build All Versions Sequentially
+      - name: Build Toolchain
         run: |
-          set -e
+          chmod +x scripts/build-toolchain.sh
+          bash scripts/build-toolchain.sh
 
-          while read VERSION; do
-            if [[ -z "$VERSION" || "$VERSION" =~ ^# ]]; then
-              continue
-            fi
-
-            echo ""
-            echo "========================================"
-            echo "🚀 Building PHP $VERSION"
-            echo "========================================"
-
-            bash scripts/build-php.sh $VERSION
-
-            echo ""
-            echo "🧪 Testing PHP $VERSION"
-
-            PHP_PATH=./output-$VERSION/php-$VERSION-arm64/bin/php
-
-            if [ ! -f "$PHP_PATH" ]; then
-              echo "❌ PHP binary not found for $VERSION"
-              exit 1
-            fi
-
-            $PHP_PATH -v
-            $PHP_PATH -m | grep -i opcache || true
-
-            echo ""
-            echo "📦 Uploading artifact for $VERSION"
-
-            echo "VERSION=$VERSION" >> $GITHUB_ENV
-
+      - name: Build PHP Sequentially
+        run: |
+          chmod +x scripts/build-php.sh
+          while read V; do
+            [[ -z "$V" || "$V" =~ ^# ]] && continue
+            bash scripts/build-php.sh "$V"
           done < versions/php-versions.txt
 
-      - name: Upload All Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Build PECL
+        run: |
+          chmod +x scripts/build-pecl.sh
+          while read V; do
+            [[ -z "$V" || "$V" =~ ^# ]] && continue
+            bash scripts/build-pecl.sh "output-$V/php-$V-arm64"
+          done < versions/php-versions.txt
+
+      - name: Verify
+        run: |
+          while read V; do
+            [[ -z "$V" || "$V" =~ ^# ]] && continue
+            output-$V/php-$V-arm64/bin/php -v
+          done < versions/php-versions.txt
+
+      - name: Archive
+        run: |
+          for dir in output-*; do
+            zip -r $dir.zip $dir
+          done
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: php-builds-arm64
-          path: |
-            output-*/php-*-arm64.zip
+          name: php-builds
+          path: output-*.zip

@@ -19,18 +19,13 @@ fi
 FINAL_OUT_DIR="$WORK/output-$VERSION"
 mkdir -p "$FINAL_OUT_DIR"
 
-############################################
-# CACHE STRUCTURE
-############################################
 CACHE="$WORK/.global-deps"
 DEPS="$CACHE/deps"
 SRC="$CACHE/src"
-
-mkdir -p "$DEPS"
-mkdir -p "$SRC"
+mkdir -p "$DEPS" "$SRC"
 
 ############################################
-# DOWNLOAD HELPER (Top-level scope fix)
+# DOWNLOAD HELPER
 ############################################
 download() {
   local URL=$1
@@ -42,10 +37,9 @@ download() {
 }
 
 ############################################
-# BUILD DEPENDENCIES (ONCE)
+# BUILD DEPENDENCIES
 ############################################
 if [ ! -f "$DEPS/lib/libicuuc.a" ]; then
-
   echo "🔧 Building global dependencies..."
   cd "$SRC"
 
@@ -134,14 +128,13 @@ make -j$CPU
 make install
 
 ############################################
-# FIX LIBRARIES & DYLD (Portability)
+# FIX LIBRARIES & DYLD
 ############################################
-echo "🔧 Fixing DYLD Paths for Mac..."
+echo "🔧 Fixing DYLD Paths..."
 BIN="$FINAL/bin/php"
 LIBDIR="$FINAL/lib"
 mkdir -p "$LIBDIR"
 
-# Copy dynamic libs to local lib folder
 cp "$DEPS"/lib/*.dylib "$LIBDIR/" || true
 
 for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
@@ -152,7 +145,6 @@ for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
   fi
 done
 
-# Fix Internal Lib Linking (libssl -> libcrypto)
 if [ -f "$LIBDIR/libssl.3.dylib" ]; then
   install_name_tool -change "$DEPS/lib/libcrypto.3.dylib" "@rpath/libcrypto.3.dylib" "$LIBDIR/libssl.3.dylib"
 fi
@@ -160,64 +152,65 @@ fi
 install_name_tool -add_rpath "@executable_path/../lib" "$BIN" || true
 
 ############################################
-# PECL & WRAPPERS FIX (Latest Update)
+# 🚀 THE RELOCATABLE FIX
 ############################################
-echo "📝 Creating Wrappers & Fixing Config..."
+echo "📝 Writing Portable Config..."
 
-# PECL/PEAR Relative Path Fix
-if [ -f "$FINAL/bin/pecl" ]; then
-  sed -i '' "s|$FINAL|\$(cd \"\$(dirname \"\$0\")/..\" \&\& pwd)|g" "$FINAL/bin/pecl"
-  sed -i '' "s|$FINAL|\$(cd \"\$(dirname \"\$0\")/..\" \&\& pwd)|g" "$FINAL/bin/pear"
-  
-  # PEAR config initialize
-  "$FINAL/bin/php" -d pcre.jit=0 "$FINAL/bin/pear" config-set php_bin "$FINAL/bin/php" || true
-  "$FINAL/bin/php" -d pcre.jit=0 "$FINAL/bin/pear" config-set php_dir "$FINAL/lib/php" || true
-fi
-
-# php-run Wrapper (JIT fix included)
+# PHP-RUN WRAPPER
 cat > "$FINAL/bin/php-run" <<'EOF'
 #!/bin/bash
 DIR="$(cd "$(dirname "$0")" && pwd)"
-export PHPRC="$DIR/../lib/php.ini"
+export PHPRC="$DIR/../lib"
 export DYLD_LIBRARY_PATH="$DIR/../lib:$DYLD_LIBRARY_PATH"
-# Force JIT off to avoid memory allocation warnings on ARM64
-exec "$DIR/php" -d pcre.jit=0 "$@"
+exec "$DIR/php" -n -c "$DIR/../lib/php.ini" -d pcre.jit=0 "$@"
 EOF
 chmod +x "$FINAL/bin/php-run"
 
-# PHP.INI (JIT fix + Opcache)
-cp "php.ini-production" "$FINAL/lib/php.ini"
-cat >> "$FINAL/lib/php.ini" <<EOF
-
-; --- PORTABILITY & JIT FIXES ---
+# PHP.INI (Placeholder paths)
+# EXT_DIR ko hum setup.sh me replace karenge
+cat > "$FINAL/lib/php.ini" <<EOF
 pcre.jit=0
 opcache.jit=0
 zend_extension=opcache
 opcache.enable=1
 opcache.enable_cli=1
-extension_dir = "./"
+extension_dir = "REPLACE_ME_WITH_ACTUAL_DIR"
 EOF
 
-# setup.sh (The "New Mac" Fixer)
+# SETUP.SH (The Intelligence)
 cat > "$FINAL/setup.sh" <<'EOF'
 #!/bin/bash
 DIR="$(cd "$(dirname "$0")" && pwd)"
-echo "🔐 Fixing Mac Security Permissions..."
+echo "🔐 Fixing Mac Security..."
 xattr -rd com.apple.quarantine "$DIR" || true
 chmod +x "$DIR/bin/php" "$DIR/bin/php-run" "$DIR/bin/pecl" "$DIR/bin/pear" || true
+
+echo "🏠 Re-mapping Internal Paths..."
+# Actual extension folder dhundna
+ACTUAL_EXT_DIR=$(find "$DIR/lib/php/extensions" -name "no-debug-non-zts-*" -type d | head -n 1)
+if [ -n "$ACTUAL_EXT_DIR" ]; then
+  sed -i '' "s|extension_dir = \"REPLACE_ME_WITH_ACTUAL_DIR\"|extension_dir = \"$ACTUAL_EXT_DIR/\"|g" "$DIR/lib/php.ini"
+fi
+
+# PECL/PEAR hardcoded paths fix
+sed -i '' "s|REPLACE_ME_WITH_DIR|$DIR|g" "$DIR/bin/pecl" "$DIR/bin/pear" 2>/dev/null || true
+
+# Re-init PEAR/PECL to new local path
+"$DIR/bin/php" -d pcre.jit=0 "$DIR/bin/pear" config-set php_bin "$DIR/bin/php" || true
+"$DIR/bin/php" -d pcre.jit=0 "$DIR/bin/pear" config-set php_dir "$DIR/lib/php" || true
+
 echo "🌐 Updating PECL Channels..."
-"$DIR/bin/php-run" "$DIR/bin/pecl" channel-update pecl.php.net || true
-echo "✅ Setup Complete. Use ./bin/php-run"
+"$DIR/bin/php-run" ./bin/pecl channel-update pecl.php.net || true
+echo "✅ Setup Complete. Run: ./bin/php-run -v"
 EOF
 chmod +x "$FINAL/setup.sh"
+
+# Fix PECL/PEAR wrapper paths during build
+sed -i '' "s|$FINAL|REPLACE_ME_WITH_DIR|g" "$FINAL/bin/pecl" "$FINAL/bin/pear"
 
 ############################################
 # PACKAGE
 ############################################
 cd "$WORK"
 zip -ry "$FINAL_OUT_DIR/php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
-
-echo "======================================"
-echo "✅ PHP $VERSION built successfully."
-echo "Wrappers: php-run, setup.sh included"
-echo "======================================"
+echo "✅ Build Finished."

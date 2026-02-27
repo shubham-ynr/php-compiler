@@ -16,34 +16,16 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-# YAML ke expected folder ke liye
 FINAL_OUT_DIR="$WORK/output-$VERSION"
 mkdir -p "$FINAL_OUT_DIR"
 
-############################################
-# CACHE STRUCTURE
-############################################
 CACHE="$WORK/.global-deps"
 DEPS="$CACHE/deps"
 SRC="$CACHE/src"
-
-mkdir -p "$DEPS"
-mkdir -p "$SRC"
+mkdir -p "$DEPS" "$SRC"
 
 ############################################
-# DOWNLOAD HELPER
-############################################
-download() {
-  URL=$1
-  FILE=$2
-  if [ ! -f "$FILE" ]; then
-    echo "⬇ Downloading $(basename "$FILE")"
-    curl -L --fail -o "$FILE" "$URL"
-  fi
-}
-
-############################################
-# BUILD DEPENDENCIES (ONCE)
+# BUILD DEPENDENCIES
 ############################################
 if [ ! -f "$DEPS/lib/libicuuc.a" ]; then
   echo "🔧 Building global dependencies..."
@@ -134,17 +116,15 @@ make -j$CPU
 make install
 
 ############################################
-# FIX LIBRARIES & PORTABILITY (MAMP Logic)
+# FIX LIBRARIES & DYLD
 ############################################
-echo "🔧 Patching Binaries for Portability..."
+echo "🔧 Fixing DYLD Paths..."
 BIN="$FINAL/bin/php"
 LIBDIR="$FINAL/lib"
 mkdir -p "$LIBDIR"
 
-# Copy all dynamic libs to bundle
 cp "$DEPS"/lib/*.dylib "$LIBDIR/" || true
 
-# Fix Binary to Rpath
 for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
   if [ -f "$LIBDIR/$lib" ]; then
     chmod 755 "$LIBDIR/$lib"
@@ -153,7 +133,6 @@ for lib in libssl.3.dylib libcrypto.3.dylib libz.1.dylib libonig.5.dylib; do
   fi
 done
 
-# Fix Internal Lib Linking (libssl -> libcrypto)
 if [ -f "$LIBDIR/libssl.3.dylib" ]; then
   install_name_tool -change "$DEPS/lib/libcrypto.3.dylib" "@rpath/libcrypto.3.dylib" "$LIBDIR/libssl.3.dylib"
 fi
@@ -161,49 +140,55 @@ fi
 install_name_tool -add_rpath "@executable_path/../lib" "$BIN" || true
 
 ############################################
-# PECL & WRAPPERS
+# 🚀 PECL & JIT FIXES
 ############################################
-echo "📝 Creating Wrappers..."
+echo "📝 Fixing PECL & JIT Config..."
 
-# PECL Relative Path Fix
+# 1. Create php.ini first so PEAR/PECL can use it
+cat > "$FINAL/lib/php.ini" <<EOF
+pcre.jit=0
+opcache.jit=0
+extension_dir = "$FINAL/lib/php/extensions/no-debug-non-zts-$(date +%Y%m%d)/"
+zend_extension=opcache
+EOF
+
+# 2. Fix PECL/PEAR Binary Paths
 if [ -f "$FINAL/bin/pecl" ]; then
+  # Make them relative
   sed -i '' "s|$FINAL|\$(cd \"\$(dirname \"\$0\")/..\" \&\& pwd)|g" "$FINAL/bin/pecl"
   sed -i '' "s|$FINAL|\$(cd \"\$(dirname \"\$0\")/..\" \&\& pwd)|g" "$FINAL/bin/pear"
+  
+  # Configure PEAR to use the local PHP binary
+  $FINAL/bin/php -d pcre.jit=0 $FINAL/bin/pear config-set php_bin $FINAL/bin/php || true
 fi
 
-# php-run Wrapper (MAMP Style)
+# 3. Create 'php-run' (The Safe Launcher)
 cat > "$FINAL/bin/php-run" <<'EOF'
 #!/bin/bash
 DIR="$(cd "$(dirname "$0")" && pwd)"
 export PHPRC="$DIR/../lib/php.ini"
 export DYLD_LIBRARY_PATH="$DIR/../lib:$DYLD_LIBRARY_PATH"
-exec "$DIR/php" "$@"
+# Force JIT off via CLI flag as well
+exec "$DIR/php" -d pcre.jit=0 "$@"
 EOF
 chmod +x "$FINAL/bin/php-run"
 
-# setup.sh (Security Fixer)
+# 4. Create 'setup.sh'
 cat > "$FINAL/setup.sh" <<'EOF'
 #!/bin/bash
 DIR="$(cd "$(dirname "$0")" && pwd)"
-echo "🔐 Fixing Mac Permissions..."
+echo "🔐 Fixing Permissions..."
 xattr -rd com.apple.quarantine "$DIR" || true
-chmod +x "$DIR/bin/php" "$DIR/bin/php-run" "$DIR/bin/pecl" || true
-echo "✅ Ready! Use ./bin/php-run"
+chmod +x "$DIR/bin/php" "$DIR/bin/php-run" "$DIR/bin/pecl" "$DIR/bin/pear" || true
+# Pre-configure PECL channel
+./bin/php-run ./bin/pecl channel-update pecl.php.net || true
+echo "✅ Setup Complete. Use ./bin/php-run -v"
 EOF
 chmod +x "$FINAL/setup.sh"
-
-# PHP.INI (Production)
-cp "$SRC/php-$VERSION/php.ini-production" "$FINAL/lib/php.ini"
-cat >> "$FINAL/lib/php.ini" <<EOF
-zend_extension=opcache
-opcache.enable=1
-opcache.enable_cli=1
-EOF
 
 ############################################
 # PACKAGE
 ############################################
 cd "$WORK"
 zip -ry "$FINAL_OUT_DIR/php-$VERSION-$ARCH.zip" "php-$VERSION-$ARCH"
-
-echo "✅ PHP $VERSION built and packaged successfully."
+echo "✅ PHP $VERSION build finished."

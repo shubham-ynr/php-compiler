@@ -116,7 +116,7 @@ jobs:
           - 8.5.2
           - 8.5.3
 
-    steps:
+      steps:
       - uses: actions/checkout@v4
 
       - name: Cache Global Dependencies
